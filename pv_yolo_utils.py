@@ -14,7 +14,7 @@ class PersonDetector:
             x1, y1, x2, y2 = bbox
     """
 
-    def __init__(self, model_path="yolo11n.pt", conf=0.25, device=None):
+    def __init__(self, model_path="yolo11n.pt", conf=0.25, device=None, imgsz=1280):
         """
         model_path:
             Path or name of a YOLO model. "yolo11n.pt" will be auto-downloaded
@@ -27,6 +27,7 @@ class PersonDetector:
         self.model = YOLO(model_path)
         self.conf = conf
         self.device = device
+        self.imgsz = imgsz
 
     def detect_largest_person(self, frame):
         """
@@ -39,13 +40,18 @@ class PersonDetector:
 
         h, w = frame.shape[:2]
 
+        # Choose an inference size and round it up to a multiple of 32
+        base = self.imgsz or max(h, w)
+        imgsz = int(((base + 31) // 32) * 32)
+
         results = self.model.predict(
             source=frame,
             conf=self.conf,
-            imgsz=max(h, w),  # use max dimension as inference size
+            imgsz=imgsz,
             device=self.device,
-            verbose=False,
+            verbose=False,   # keeps Ultralytics progress quiet
         )
+
 
         if len(results) == 0 or len(results[0].boxes) == 0:
             return None
