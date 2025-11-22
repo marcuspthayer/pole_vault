@@ -2,3 +2,4 @@ opencv-contrib-python
 numpy<2
 pandas
 mediapipe
+ultralytics
