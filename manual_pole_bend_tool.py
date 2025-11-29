@@ -8,7 +8,7 @@ window_name = "Pole Bend Annotator"
 # Globals used by mouse callback
 current_points = []        # points in ORIGINAL frame coordinates
 max_points_this_step = 0   # how many clicks allowed
-current_step = 0           # 0=full length, 1=plant orientation, 2=max bend
+current_step = 0           # 0=step1, 1=step2, 2=step3
 display_scale = 1.0        # scale factor from original -> displayed frame
 
 
@@ -36,7 +36,8 @@ def draw_points_and_lines(display_frame, pts_orig, color=(0, 255, 0)):
     for (xo, yo) in pts_orig:
         xd = int(xo * display_scale)
         yd = int(yo * display_scale)
-        cv2.circle(vis, (xd, yd), 5, color, -1)
+        # Smaller dots than before (was radius=5)
+        cv2.circle(vis, (xd, yd), 3, color, -1)
     if len(pts_orig) == 2:
         x1 = int(pts_orig[0][0] * display_scale)
         y1 = int(pts_orig[0][1] * display_scale)
@@ -134,30 +135,38 @@ def main():
     initial_h = int(h0 * display_scale)
     cv2.resizeWindow(window_name, initial_w, initial_h)
 
-    # Data collected across steps (all in ORIGINAL coords)
-    full_length_points = []       # [p0, p1] before plant (straight pole)
-    step1_frame_idx = None        # frame index for straight pole
+    # ===================== DATA STORAGE =====================
 
-    plant_tip_point = None        # (x,y) estimated tip at plant (occluded)
-    plant_top_point = None        # (x,y) top point used at plant
-    plant_other_point = None      # (x,y) second point at plant
-    plant_frame_idx = None        # frame index for plant
+    # Step 1: bottom hand ↔ tip (length segment 1)
+    step1_points = []           # [hand, tip] (any order)
+    step1_frame_idx = None
+    hand_tip_length = None      # L_hand_tip
 
-    maxbend_top_point = None      # (x,y) at max bend
-    maxbend_frame_idx = None      # frame index for max bend
+    # Step 2: top ↔ bottom hand (plant frame, length segment 2 + orientation)
+    plant_top_point = None      # (x,y) top at plant
+    plant_hand_point = None     # (x,y) bottom hand at plant
+    plant_tip_point = None      # (x,y) estimated tip at plant (occluded)
+    plant_frame_idx = None
+    top_hand_length = None      # L_top_hand
+    full_pole_length = None     # L_full = L_hand_tip + L_top_hand
+
+    # Step 3: max bend
+    maxbend_top_point = None    # (x,y) top at max bend
+    maxbend_frame_idx = None
 
     # Step labels & required clicks
     step_descriptions = [
-        "STEP 1/3: Pre-plant frame. Click TWO points on the straight pole (tip & top, any order).",
-        "STEP 2/3: Plant frame. Click TWO points on the visible pole (one near top, one lower).",
-        "STEP 3/3: Max bend frame. Click the TOP of the pole (1 click)."
+        "STEP 1/3: Pre-plant frame. Click TWO points: bottom hand and pole tip (any order).",
+        "STEP 2/3: PLANT frame. Click TWO points: top of pole and bottom hand (any order).",
+        "STEP 3/3: Max bend frame. Click ONE point: top of bent pole."
     ]
-    # Step 1: 2 clicks (full length)
-    # Step 2: 2 clicks (top + another point to define direction)
+    # Step 1: 2 clicks (hand + tip)
+    # Step 2: 2 clicks (top + hand)
     # Step 3: 1 click (top at max bend)
     step_required_clicks = [2, 2, 1]
 
-    # Main loop over steps
+    # ===================== MAIN INTERACTIVE LOOP =====================
+
     for step in range(3):
         current_step = step
         max_points_this_step = step_required_clicks[step]
@@ -188,7 +197,7 @@ def main():
             # Draw current step's points/line (current_points are ORIGINAL coords)
             display = draw_points_and_lines(display, current_points, color=(0, 255, 0))
 
-            # Overlay text
+            # Overlay text (leave this small, top-left for live interaction)
             text = f"Step {step+1}/3 | Frame {frame_idx} | Clicks: {len(current_points)}/{max_points_this_step}"
             cv2.putText(display, text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX,
                         0.7, (0, 255, 255), 2)
@@ -217,55 +226,60 @@ def main():
                 else:
                     # Save the points for this step
                     if step == 0:
-                        # Full length, 2 points anywhere on straight pole.
-                        # We'll just use the distance between them as L_full.
-                        full_length_points = current_points.copy()
+                        # STEP 1: bottom hand ↔ tip (any order)
+                        step1_points = current_points.copy()
                         step1_frame_idx = frame_idx
-                        print("Saved pre-plant straight pole points:", full_length_points)
+                        hand_tip_length = distance(step1_points[0], step1_points[1])
+                        print("Saved Step 1 points (hand & tip):", step1_points)
+                        print(f"L_hand_tip = {hand_tip_length:.2f} px")
                         print("Step 1 frame index:", step1_frame_idx)
 
                     elif step == 1:
-                        # Plant frame: two points on visible pole.
-                        # Use them to define direction and then extend by L_full.
+                        # STEP 2: top ↔ bottom hand at plant (any order)
                         pA, pB = current_points
-                        # Decide which is top: smaller y is higher in the image
+
+                        # Decide which is top (smaller y is higher on the image)
                         if pA[1] < pB[1]:
                             plant_top_point = pA
-                            plant_other_point = pB
+                            plant_hand_point = pB
                         else:
                             plant_top_point = pB
-                            plant_other_point = pA
+                            plant_hand_point = pA
 
                         plant_frame_idx = frame_idx
 
                         print("Plant frame points (original):", current_points)
                         print("Interpreted plant TOP point:", plant_top_point)
-                        print("Interpreted plant SECOND point:", plant_other_point)
+                        print("Interpreted plant HAND point:", plant_hand_point)
                         print("Plant frame index:", plant_frame_idx)
 
-                        # Compute L_full from step 1
-                        if len(full_length_points) != 2:
-                            print("Error: Full-length points missing; cannot estimate plant tip.")
-                        else:
-                            q1, q2 = full_length_points
-                            L_full = distance(q1, q2)
-                            print(f"Computed straight pole length L_full = {L_full:.2f} px")
+                        # Compute L_top_hand at plant
+                        top_hand_length = distance(plant_top_point, plant_hand_point)
+                        print(f"L_top_hand = {top_hand_length:.2f} px")
 
-                            # Direction from top -> other
-                            vec = np.array(plant_other_point, dtype=float) - np.array(plant_top_point, dtype=float)
+                        if hand_tip_length is None:
+                            print("Error: Step 1 length missing; cannot reconstruct full pole.")
+                            plant_tip_point = None
+                        else:
+                            # Full pole length from two segments
+                            full_pole_length = hand_tip_length + top_hand_length
+                            print(f"Reconstructed full pole length L_full = {full_pole_length:.2f} px")
+
+                            # Direction from top -> hand at plant (orientation of pole)
+                            vec = np.array(plant_hand_point, dtype=float) - np.array(plant_top_point, dtype=float)
                             norm = np.linalg.norm(vec)
                             if norm < 1e-6:
                                 print("Error: Plant points too close together to define a direction.")
                                 plant_tip_point = None
                             else:
                                 direction = vec / norm
-                                # Extrapolate along this direction by full pole length
-                                tip_est = np.array(plant_top_point, dtype=float) + direction * L_full
+                                # Extrapolate along this direction by full pole length from the top
+                                tip_est = np.array(plant_top_point, dtype=float) + direction * full_pole_length
                                 plant_tip_point = (float(tip_est[0]), float(tip_est[1]))
                                 print("Estimated occluded plant tip position:", plant_tip_point)
 
                     elif step == 2:
-                        # Max bend: single click for pole top
+                        # STEP 3: Max bend: single click for pole top
                         maxbend_top_point = current_points[0]
                         maxbend_frame_idx = frame_idx
                         print("Saved max-bend top point:", maxbend_top_point)
@@ -276,31 +290,43 @@ def main():
     cap.release()
     cv2.destroyAllWindows()
 
-    # Compute lengths and bend percentage + save annotated frames
+    # ===================== POST-COMPUTATION & SAVING =====================
+
     if (
-        len(full_length_points) == 2
+        step1_points
         and plant_tip_point is not None
+        and plant_top_point is not None
+        and plant_hand_point is not None
         and maxbend_top_point is not None
         and step1_frame_idx is not None
         and plant_frame_idx is not None
         and maxbend_frame_idx is not None
+        and hand_tip_length is not None
+        and top_hand_length is not None
     ):
-        # Straight pole chord length (pre-plant)
-        q1, q2 = full_length_points
-        L_full = distance(q1, q2)
+        # Reconstruct full pole length
+        full_pole_length = hand_tip_length + top_hand_length
 
         # Bent chord uses plant tip estimate + new top at max bend
+        L_full = full_pole_length
         L_bent = distance(plant_tip_point, maxbend_top_point)
 
         bend_fraction = 1.0 - (L_bent / L_full)
         bend_percent = bend_fraction * 100.0
 
         print("\n=== Results ===")
-        print(f"Straight chord length L_full: {L_full:.2f} px")
+        print(f"L_hand_tip (Step1):         {hand_tip_length:.2f} px")
+        print(f"L_top_hand (Step2):         {top_hand_length:.2f} px")
+        print(f"Full pole length L_full:    {L_full:.2f} px")
         print(f"Max-bend chord length L_bent: {L_bent:.2f} px")
         print(f"Max bend (shrink) fraction:   {bend_fraction:.4f}")
         print(f"Max bend (shrink) percent:    {bend_percent:.2f}%")
         print(f"Estimated plant tip (occluded) at: {plant_tip_point}")
+
+        # Common font settings for annotations (bigger text, top-right aligned)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        margin = 40
+        # Step 1, 2, 3 will each compute their own text sizes because text lengths differ
 
         # ---------- Save STEP 1 annotated frame ----------
         cap1 = cv2.VideoCapture(video_path)
@@ -308,21 +334,39 @@ def main():
         ret1, frame_step1 = cap1.read()
         cap1.release()
         if ret1:
-            p1 = (int(round(full_length_points[0][0])), int(round(full_length_points[0][1])))
-            p2 = (int(round(full_length_points[1][0])), int(round(full_length_points[1][1])))
+            p1 = (int(round(step1_points[0][0])), int(round(step1_points[0][1])))
+            p2 = (int(round(step1_points[1][0])), int(round(step1_points[1][1])))
             ann1 = frame_step1.copy()
             cv2.line(ann1, p1, p2, (0, 0, 255), 2)
             cv2.circle(ann1, p1, 6, (255, 0, 0), -1)
             cv2.circle(ann1, p2, 6, (0, 255, 0), -1)
 
-            text1 = "Step 1: Straight pole reference"
-            text2 = f"L_full = {L_full:.1f} px"
-            cv2.putText(ann1, text1, (30, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
-            cv2.putText(ann1, text2, (30, 80),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            text1 = "Step 1: Bottom hand to tip"
+            text2 = f"L_hand_tip = {hand_tip_length:.1f} px"
 
-            out1 = "step1_straight_pole.png"
+            h1, w1 = ann1.shape[:2]
+
+            # Bigger font scales (approx 2x previous)
+            fs1 = 2.0
+            fs2 = 1.6
+            th1 = 3
+            th2 = 3
+
+            (tw1, th1_pix), _ = cv2.getTextSize(text1, font, fs1, th1)
+            (tw2, th2_pix), _ = cv2.getTextSize(text2, font, fs2, th2)
+
+            x1 = w1 - margin - tw1
+            y1 = margin + th1_pix
+
+            x2 = w1 - margin - tw2
+            y2 = y1 + th2_pix + 10
+
+            cv2.putText(ann1, text1, (x1, y1),
+                        font, fs1, (0, 0, 255), th1)
+            cv2.putText(ann1, text2, (x2, y2),
+                        font, fs2, (0, 0, 255), th2)
+
+            out1 = "step1_hand_to_tip.png"
             cv2.imwrite(out1, ann1)
             print(f"Saved Step 1 annotated frame as {out1}")
 
@@ -334,24 +378,40 @@ def main():
         if ret2:
             ann2 = frame_step2.copy()
             top_px = (int(round(plant_top_point[0])), int(round(plant_top_point[1])))
-            other_px = (int(round(plant_other_point[0])), int(round(plant_other_point[1])))
+            hand_px = (int(round(plant_hand_point[0])), int(round(plant_hand_point[1])))
             tip_px = (int(round(plant_tip_point[0])), int(round(plant_tip_point[1])))
 
-            # Draw the visible segment the user clicked
-            cv2.line(ann2, top_px, other_px, (0, 255, 0), 2)
-            cv2.circle(ann2, top_px, 6, (0, 255, 0), -1)   # top
-            cv2.circle(ann2, other_px, 6, (0, 255, 255), -1)  # second point
+            # Draw the top↔hand segment
+            cv2.line(ann2, top_px, hand_px, (0, 255, 0), 2)
+            cv2.circle(ann2, top_px, 6, (0, 255, 0), -1)      # top
+            cv2.circle(ann2, hand_px, 6, (0, 255, 255), -1)   # bottom hand
 
             # Draw the full projected line from top to estimated tip
             cv2.line(ann2, top_px, tip_px, (0, 0, 255), 2)
-            cv2.circle(ann2, tip_px, 6, (255, 0, 0), -1)  # projected tip
+            cv2.circle(ann2, tip_px, 6, (255, 0, 0), -1)      # projected tip
 
             text1 = "Step 2: Plant frame with projected hidden tip"
-            text2 = f"L_full = {L_full:.1f} px"
-            cv2.putText(ann2, text1, (30, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
-            cv2.putText(ann2, text2, (30, 80),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            text2 = f"L_hand_tip={hand_tip_length:.1f}px, L_top_hand={top_hand_length:.1f}px, L_full={L_full:.1f}px"
+
+            h2, w2 = ann2.shape[:2]
+            fs1 = 2.0
+            fs2 = 1.6
+            th1 = 3
+            th2 = 3
+
+            (tw1, th1_pix), _ = cv2.getTextSize(text1, font, fs1, th1)
+            (tw2, th2_pix), _ = cv2.getTextSize(text2, font, fs2, th2)
+
+            x1 = w2 - margin - tw1
+            y1 = margin + th1_pix
+
+            x2 = w2 - margin - tw2
+            y2 = y1 + th2_pix + 10
+
+            cv2.putText(ann2, text1, (x1, y1),
+                        font, fs1, (0, 0, 255), th1)
+            cv2.putText(ann2, text2, (x2, y2),
+                        font, fs2, (0, 0, 255), th2)
 
             out2 = "step2_plant_projection.png"
             cv2.imwrite(out2, ann2)
@@ -375,10 +435,26 @@ def main():
 
             text1 = f"Step 3: Max bend = {bend_percent:.2f}%"
             text2 = f"L_full={L_full:.1f}px, L_bent={L_bent:.1f}px"
-            cv2.putText(annotated, text1, (30, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
-            cv2.putText(annotated, text2, (30, 80),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+
+            h3, w3 = annotated.shape[:2]
+            fs1 = 2.0
+            fs2 = 1.6
+            th1 = 3
+            th2 = 3
+
+            (tw1, th1_pix), _ = cv2.getTextSize(text1, font, fs1, th1)
+            (tw2, th2_pix), _ = cv2.getTextSize(text2, font, fs2, th2)
+
+            x1 = w3 - margin - tw1
+            y1 = margin + th1_pix
+
+            x2 = w3 - margin - tw2
+            y2 = y1 + th2_pix + 10
+
+            cv2.putText(annotated, text1, (x1, y1),
+                        font, fs1, (0, 0, 255), th1)
+            cv2.putText(annotated, text2, (x2, y2),
+                        font, fs2, (0, 0, 255), th2)
 
             out3 = "step3_maxbend_annotated.png"
             cv2.imwrite(out3, annotated)
@@ -402,7 +478,6 @@ def main():
             except cv2.error:
                 # Window might already be closed; ignore the error
                 pass
-
 
     else:
         print("Missing points or frames; could not compute bend or save all annotated frames.")
