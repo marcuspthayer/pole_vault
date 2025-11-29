@@ -39,7 +39,7 @@ def label_steps(video_path):
 
     Controls:
       - 's' : mark a STEP (ground contact) at the current frame.
-      - 'e' : confirm the LAST visible step (takeoff step) and finish labeling.
+      - 'e' : end labeling and confirm that the last step labeled was the takeoff step.
       - 'a' : jump BACK 10 frames.
       - 'd' : jump FORWARD 10 frames.
       - 'j' : jump BACK 50 frames.

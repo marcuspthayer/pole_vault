@@ -7,12 +7,9 @@ import mediapipe as mp
 import tkinter as tk
 
 from pv_step_labeler import choose_video_file, label_steps
-from pv_hip_analysis import (
-    compute_hip_time_series,
-    compute_hip_drop,
-    roi_pose_landmarks_full_frame,
-)
-from pv_yolo_utils import PersonDetector
+from pv_hip_analysis import compute_hip_time_series, compute_hip_drop
+
+from pv_yolo_utils import draw_outlined_text
 
 mp_pose = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
@@ -58,7 +55,7 @@ def draw_simple_skeleton(frame, landmark_list_full, connections,
 
 
 
-def analyze_pole_vault_approach(video_path, enable_step_labeling=True):
+def analyze_pole_vault_approach(video_path, enable_step_labeling=True, crop_to_first_step=False):
     destination_folder = os.path.dirname(video_path)
     fn = os.path.basename(video_path)
 
@@ -66,13 +63,17 @@ def analyze_pole_vault_approach(video_path, enable_step_labeling=True):
     step_frames = []
     last_step_frame = None
     fps = None
+    first_step_frame = None
 
     if enable_step_labeling:
+        print("Pass 1/3: Manual step labeling...")
         step_frames, last_step_frame, fps = label_steps(video_path)
         if step_frames is None and last_step_frame is None:
             print("Step labeling aborted. Exiting.")
             return None
-        print(f"Using last_step_frame={last_step_frame} for approach window.")
+        if step_frames:
+            first_step_frame = step_frames[0]
+        print(f"Using first_step_frame={first_step_frame}, last_step_frame={last_step_frame} for approach window.")
     else:
         # No labeling; we still need FPS for reporting
         cap_tmp = cv2.VideoCapture(video_path)
@@ -82,18 +83,30 @@ def analyze_pole_vault_approach(video_path, enable_step_labeling=True):
         total_frames = int(cap_tmp.get(cv2.CAP_PROP_FRAME_COUNT))
         cap_tmp.release()
         last_step_frame = None  # interpret as: use whole clip
+        first_step_frame = None
 
     # --- STEP 2: hip time series + metrics ---
-    hip_y_arr, body_h_arr, fps_from_pose, total_frames, pose_landmarks_list = \
+    hip_y_arr, body_h_arr, fps_from_pose, total_frames, pose_landmarks_list, roi_box_list = \
     compute_hip_time_series(video_path)
 
     # If no fps from labeler, use pose's fps
     if fps is None:
         fps = fps_from_pose
 
-    hip_droop_pct, hip_droop_trend_pct, n_valid = compute_hip_drop(
-        hip_y_arr, body_h_arr, last_step_frame=last_step_frame
+    (
+        hip_droop_pct,
+        hip_droop_trend_pct,
+        n_valid,
+        worst_droop_frames,
+        analysis_start_idx,
+        analysis_end_idx,
+    ) = compute_hip_drop(
+        hip_y_arr,
+        body_h_arr,
+        first_step_frame=first_step_frame,
+        last_step_frame=last_step_frame,
     )
+
 
     # --- STEP 3: stride metrics from step_frames ---
     stride_rate = None
@@ -111,9 +124,13 @@ def analyze_pole_vault_approach(video_path, enable_step_labeling=True):
     # --- Print metrics summary ---
     print("\n=== Approach Metrics ===")
     if last_step_frame is not None:
+        start_idx = analysis_start_idx if "analysis_start_idx" in locals() else (
+            first_step_frame if first_step_frame is not None else 0
+        )
         print(
-            f"Approach window: frames 0..{last_step_frame} "
-            f"(t_end = {last_step_frame / fps:.3f} s)"
+            f"Approach window: frames {start_idx}..{last_step_frame} "
+            f"(t_start = {start_idx / fps:.3f} s, "
+            f"t_end = {last_step_frame / fps:.3f} s)"
         )
     else:
         print(f"Approach window: full clip (0..{total_frames - 1})")
@@ -126,14 +143,16 @@ def analyze_pole_vault_approach(video_path, enable_step_labeling=True):
 
     if hip_droop_pct is not None:
         print(
-            f"Hip droop near takeoff: {hip_droop_pct:+.2f}% of body height "
+            f"Hip droop worst-case (lowest 5% in last 50%): "
+            f"{hip_droop_pct:+.2f}% of body height "
             f"(positive = hip lower than early approach)."
         )
         print(
-            f"Hip droop trend (last vs first 20%): "
+            f"Hip droop trend (last 50% vs early baseline): "
             f"{hip_droop_trend_pct:+.2f}% of body height."
         )
         print(f"Valid frames used for hip analysis: {n_valid}")
+        print(f"Worst-droop frames (indices): {worst_droop_frames}")
     else:
         print("Hip droop: insufficient pose data to compute.")
 
@@ -146,6 +165,13 @@ def analyze_pole_vault_approach(video_path, enable_step_labeling=True):
     frame_height = int(cap3.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps_video = cap3.get(cv2.CAP_PROP_FPS)
     total_frames3 = int(cap3.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    # For 30 fps, we want STEP to show on 3 frames total (step-1, step, step+1).
+    # Scale this window with FPS: half-window ~ fps/30.
+    if fps_video > 0:
+        step_half_window = max(1, int(round(fps_video / 30.0)))
+    else:
+        step_half_window = 1
 
     final_output = os.path.join(
         destination_folder,
@@ -166,7 +192,7 @@ def analyze_pole_vault_approach(video_path, enable_step_labeling=True):
         text_lines.append("Stride rate: N/A")
 
     if hip_droop_pct is not None:
-        text_lines.append(f"Hip droop: {hip_droop_pct:+.1f}% of height")
+        text_lines.append(f"Hip droop (worst 5%): {hip_droop_pct:+.1f}% of height")
     else:
         text_lines.append("Hip droop: N/A")
 
@@ -176,9 +202,24 @@ def analyze_pole_vault_approach(video_path, enable_step_labeling=True):
         text_lines.append("Analysis: entire clip (no step labeling).")
 
     step_frames_set = set(step_frames)
-    detector_draw = PersonDetector(model_path="yolo11n.pt", conf=0.25)
+    worst_frame_set = set(worst_droop_frames if hip_droop_pct is not None else [])
+    
+    # Precompute all frames where "STEP" should be visible.
+    # For each labeled step frame sf, show STEP on frames
+    # [sf - step_half_window, ..., sf + step_half_window].
+    step_highlight_frames = set()
+    if step_frames:
+        for sf in step_frames:
+            for fidx in range(sf - step_half_window, sf + step_half_window + 1):
+                if 0 <= fidx < total_frames3:
+                    step_highlight_frames.add(fidx)
+                    
+    # For drawing a persistent hip path
+    hip_points_normal = []  # (x, y) for all analysis-window frames
+    hip_points_worst = []   # (x, y) for worst-droop frames
 
     frame_idx3 = -1
+
     while True:
         ret, frame = cap3.read()
         if not ret:
@@ -187,93 +228,168 @@ def analyze_pole_vault_approach(video_path, enable_step_labeling=True):
         frame_idx3 += 1
         frame_h, frame_w = frame.shape[:2]
 
-        # --- skeleton: use stored landmarks from metrics pass ---
+        # If requested, skip all frames before the first labeled step
+        if crop_to_first_step and first_step_frame is not None and frame_idx3 < first_step_frame:
+            continue
+
+        # --- ROI box: reuse the one from hip analysis (Pass 2) ---
+        roi_box = None
+        if 0 <= frame_idx3 < len(roi_box_list):
+            roi_box = roi_box_list[frame_idx3]
+
+        # --- skeleton candidate from stored landmarks ---
         landmark_list_full = None
-        if 0 <= frame_idx3 < len(pose_landmarks_list):
+        if roi_box is not None and 0 <= frame_idx3 < len(pose_landmarks_list):
             landmark_list_full = pose_landmarks_list[frame_idx3]
 
-        if landmark_list_full is not None:
-            draw_simple_skeleton(
-                frame,
-                landmark_list_full,
-                mp_pose.POSE_CONNECTIONS,
-                point_color=(0, 0, 255),
-                line_color=(0, 255, 0),
-                point_radius=3,
-                line_thickness=2,
-                visibility_threshold=0.1,
-            )
-
-        # --- ROI box: YOLO + margin, just for visualization ---
-        roi_box = None
-        bbox = detector_draw.detect_largest_person(frame)
-        if bbox is not None:
-            x1, y1, x2, y2 = bbox
-            margin = 0.3
-            bw = x2 - x1
-            bh = y2 - y1
-            cx = x1 + bw / 2
-            cy = y1 + bh / 2
-
-            roi_w = int(bw * (1 + margin))
-            roi_h = int(bh * (1 + margin))
-
-            roi_x1 = max(0, int(cx - roi_w / 2))
-            roi_y1 = max(0, int(cy - roi_h / 2))
-            roi_x2 = min(frame_w, int(cx + roi_w / 2))
-            roi_y2 = min(frame_h, int(cy + roi_h / 2))
-            roi_box = (roi_x1, roi_y1, roi_x2, roi_y2)
-
+        # Draw the yellow box from the stored ROI
         if roi_box is not None:
             x1, y1, x2, y2 = roi_box
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
 
-        # Overlay metrics text
-        y0 = 30
+        # Final sanity check before drawing skeleton:
+        #   - If the skeleton's bounding box is way larger than the YOLO ROI
+        #     or far from its center, OR if any substantial number of joints
+        #     fall outside the ROI, we skip drawing it (and skip hip dot).
+        drew_skeleton_this_frame = False
+        hip_pt_this_frame = None
+
+        if roi_box is not None and landmark_list_full is not None:
+            xs_pix = []
+            ys_pix = []
+
+            for lm in landmark_list_full.landmark:
+                xs_pix.append(lm.x * frame_w)
+                ys_pix.append(lm.y * frame_h)
+
+            skel_min_x = min(xs_pix)
+            skel_max_x = max(xs_pix)
+            skel_min_y = min(ys_pix)
+            skel_max_y = max(ys_pix)
+            skel_w = skel_max_x - skel_min_x
+            skel_h = skel_max_y - skel_min_y
+            skel_cx = 0.5 * (skel_min_x + skel_max_x)
+            skel_cy = 0.5 * (skel_min_y + skel_max_y)
+
+            roi_x1, roi_y1, roi_x2, roi_y2 = roi_box
+            roi_w = roi_x2 - roi_x1
+            roi_h = roi_y2 - roi_y1
+            roi_cx = 0.5 * (roi_x1 + roi_x2)
+            roi_cy = 0.5 * (roi_y1 + roi_y2)
+
+            # Heuristics: size and center
+            too_big = (skel_w > 1.8 * roi_w) or (skel_h > 1.8 * roi_h)
+            too_small = (skel_h < 0.25 * roi_h)  # allow fairly small but reject tiny blobs
+            far_from_center = (
+                abs(skel_cx - roi_cx) > 0.6 * roi_w or
+                abs(skel_cy - roi_cy) > 0.6 * roi_h
+            )
+
+            # Per-joint inside-ROI check, but with a loose threshold
+            outside_points = 0
+            tol = 2.0  # small tolerance in pixels
+            for x, y in zip(xs_pix, ys_pix):
+                if (x < roi_x1 - tol) or (x > roi_x2 + tol) or (y < roi_y1 - tol) or (y > roi_y2 + tol):
+                    outside_points += 1
+            frac_outside = outside_points / max(len(xs_pix), 1)
+
+            # Always compute hip point when we have landmarks
+            lm_list = landmark_list_full.landmark
+            lhip = lm_list[mp_pose.PoseLandmark.LEFT_HIP.value]
+            rhip = lm_list[mp_pose.PoseLandmark.RIGHT_HIP.value]
+            hip_x = 0.5 * (lhip.x + rhip.x) * frame_w
+            hip_y_pix = 0.5 * (lhip.y + rhip.y) * frame_h
+            hip_pt_this_frame = (int(hip_x), int(hip_y_pix))
+
+            # Require: not too big, not too small, reasonably centered,
+            # and at most ~30% of joints outside the box.
+            if (not too_big) and (not too_small) and (not far_from_center) and (frac_outside <= 0.30):
+                draw_simple_skeleton(
+                    frame,
+                    landmark_list_full,
+                    mp_pose.POSE_CONNECTIONS,
+                    point_color=(252, 0, 219),   # joints
+                    line_color=(0, 255, 0),      # skeleton
+                    point_radius=3,
+                    line_thickness=2,
+                    visibility_threshold=0.1,
+                )
+                drew_skeleton_this_frame = True
+
+
+        # If this frame is within the analysis window and we have a hip point,
+        # add it to the persistent hip path lists.
+        if (
+            last_step_frame is not None
+            and "analysis_start_idx" in locals()
+            and frame_idx3 >= analysis_start_idx
+            and frame_idx3 <= last_step_frame
+            and hip_pt_this_frame is not None
+        ):
+            if frame_idx3 in worst_frame_set:
+                hip_points_worst.append(hip_pt_this_frame)
+            else:
+                hip_points_normal.append(hip_pt_this_frame)
+        
+        # Draw accumulated hip path dots so they persist over time
+        for (hx, hy) in hip_points_normal:
+            cv2.circle(frame, (hx, hy), 5, (255, 255, 0), -1)  # normal points: blue
+
+        for (hx, hy) in hip_points_worst:
+            cv2.circle(frame, (hx, hy), 6, (0, 0, 255), -1)      # worst-droop: red
+
+
+        # Overlay metrics text (with black outline) - larger font
+        y0 = 60
+        line_spacing = 40
         for i, txt in enumerate(text_lines):
-            cv2.putText(
+            draw_outlined_text(
                 frame,
                 txt,
-                (10, y0 + 25 * i),
+                (10, y0 + line_spacing * i),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 0),
-                2,
-                cv2.LINE_AA,
+                1.4,          # ~2x bigger than 0.7
+                (0, 255, 0),  # same green fill
+                3,            # slightly thicker for readability
             )
 
-        # Mark step frames
-        if frame_idx3 in step_frames_set:
-            cv2.putText(
+
+        # Mark step frames (larger STEP text)
+        if frame_idx3 in step_highlight_frames:
+            draw_outlined_text(
                 frame,
                 "STEP",
-                (frame_width - 120, frame_height - 40),
+                (frame_width - 180, frame_height - 50),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                1.0,
-                (0, 0, 255),
-                2,
-                cv2.LINE_AA,
+                2.0,          # ~2x bigger than 1.0
+                (0, 0, 255),  # same red fill
+                3,
             )
 
-        # Jump-phase annotation
+
+        # Jump-phase annotation (larger text)
         if last_step_frame is not None and frame_idx3 > last_step_frame:
-            cv2.putText(
+            draw_outlined_text(
                 frame,
                 "Jump phase (no hip/stride analysis)",
-                (10, frame_height - 20),
+                (10, frame_height - 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 255, 0),
-                2,
-                cv2.LINE_AA,
+                1.4,           # ~2x bigger
+                (255, 255, 0), # same yellow fill
+                3,
             )
+
 
         out.write(frame)
 
-        # --- progress every 30 frames ---
-        if frame_idx3 % 30 == 0:
+        # --- progress every 10 frames ---
+        if frame_idx3 % 10 == 0:
             pct = 100.0 * (frame_idx3 + 1) / max(total_frames3, 1)
-            print(f"\rPass 3/3: {frame_idx3 + 1}/{total_frames3} frames ({pct:5.1f}%)", end="")
+            print(
+                f"\rPass 3/3: {frame_idx3 + 1}/{total_frames3} frames ({pct:5.1f}%)",
+                end="",
+                flush=True,
+            )
 
     print()  # newline after loop
 
@@ -296,6 +412,19 @@ if __name__ == "__main__":
                 "Do you want to label steps (for stride rate / last-step)? [y/N]: "
             ).strip().lower()
             enable_steps = ans in ("y", "yes")
-            analyze_pole_vault_approach(video_path, enable_step_labeling=enable_steps)
+
+            crop_to_first = False
+            if enable_steps:
+                ans2 = input(
+                    "Crop out all frames before the FIRST labeled step in the output video? [y/N]: "
+                ).strip().lower()
+                crop_to_first = ans2 in ("y", "yes")
+
+            analyze_pole_vault_approach(
+                video_path,
+                enable_step_labeling=enable_steps,
+                crop_to_first_step=crop_to_first,
+            )
         except Exception as err:
             print(f"Error during analysis: {err}")
+
