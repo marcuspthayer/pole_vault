@@ -1,6 +1,8 @@
 import numpy as np
 from ultralytics import YOLO
 import cv2
+from tkinter import filedialog
+import tkinter as tk
 
 def draw_outlined_text(
     frame,
@@ -171,3 +173,20 @@ class PersonDetector:
             return None
 
         return bbox
+
+def pick_video_file():
+    """
+    Open a file picker dialog to select a video.
+    """
+    root = tk.Tk()
+    root.withdraw()
+    video_path = filedialog.askopenfilename(
+        title="Select video file",
+        filetypes=[
+            ("Video files", "*.mp4;*.avi;*.mov;*.mkv;*.m4v"),
+            ("All files", "*.*"),
+        ],
+    )
+    root.update()
+    root.destroy()
+    return video_path
