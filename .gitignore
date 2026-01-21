@@ -1,6 +1,71 @@
-.venv/
-# Python bytecode / cache
+# ---- Python ----
 __pycache__/
-**/__pycache__/
 *.py[cod]
 *$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.ENV/
+pip-wheel-metadata/
+
+# Packaging / builds
+build/
+dist/
+*.egg-info/
+.eggs/
+wheelhouse/
+*.whl
+
+# Testing / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.pytype/
+.pyre/
+
+# IDEs / editors
+.vscode/
+.idea/
+*.swp
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# ---- Images (ignored) ----
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tif
+*.tiff
+*.webp
+*.heic
+*.svg
+*.ico
+
+# ---- Videos (ignored) ----
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.wmv
+*.flv
+*.m4v
+*.mpeg
+*.mpg
+*.3gp
+*.mts
+*.m2ts
+
