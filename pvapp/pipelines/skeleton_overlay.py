@@ -3,6 +3,7 @@ import time
 import logging
 import cv2
 import mediapipe as mp
+import subprocess
 
 from pv_yolo_utils import PersonDetector, draw_outlined_text
 from pvapp.pose import detect_person_roi, run_pose_on_frame
@@ -123,4 +124,33 @@ def process_video_skeleton_overlay(
     cap.release()
     out.release()
     logger.info(f"Finished skeleton overlay | wrote={frames_written} | out={output_path}")
-    return output_path
+    
+    # Make it playable in Streamlit/browser
+    try:
+        output_h264 = reencode_h264(output_path, logger=logger)
+        logger.info(f"H.264 re-encode complete | out={output_h264}")
+        return output_h264
+    except Exception as e:
+        logger.warning(f"ffmpeg re-encode failed; returning original mp4v. err={e}")
+        return output_path
+
+
+
+def reencode_h264(in_path: str, logger=None) -> str:
+    """
+    Re-encode a video to H.264 (browser-friendly) MP4.
+    Returns the new output path.
+    """
+    out_path = os.path.splitext(in_path)[0] + "_h264.mp4"
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", in_path,
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        out_path,
+    ]
+    if logger:
+        logger.info("Re-encoding to H.264 for Streamlit playback…")
+    subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return out_path

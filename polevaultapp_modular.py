@@ -86,41 +86,41 @@ if st.session_state.page == "upload":
         draw_roi = st.checkbox("Draw YOLO ROI box", value=True)
 
         max_frames = st.number_input("Max frames (debug; 0 = full video)", min_value=0, value=0, step=50)
+        can_process = st.session_state.video_path is not None
 
+        if st.button("🚀 Process video (skeleton overlay)", use_container_width=True, disabled=not can_process):
+            st.session_state.last_error = None
+            try:
+                with st.spinner("Running YOLO + MediaPipe…"):
+                    mf = None if int(max_frames) == 0 else int(max_frames)
+                    out_path = process_video_skeleton_overlay(
+                        st.session_state.video_path,
+                        output_path=None,
+                        yolo_model_path=yolo_model_path,
+                        conf=float(conf),
+                        margin=float(margin),
+                        draw_roi_box=draw_roi,
+                        log_file=LOG_FILE,
+                        max_frames=mf,
+                    )
 
-if st.button("🚀 Process video (skeleton overlay)", use_container_width=True):
-    st.session_state.last_error = None
-    try:
-        with st.spinner("Running YOLO + MediaPipe…"):
-            mf = None if int(max_frames) == 0 else int(max_frames)
-            out_path = process_video_skeleton_overlay(
-                st.session_state.video_path,
-                output_path=None,
-                yolo_model_path=yolo_model_path,
-                conf=float(conf),
-                margin=float(margin),
-                draw_roi_box=draw_roi,
-                log_file=LOG_FILE,
-                max_frames=mf,
-            )
+                if not out_path or not os.path.exists(out_path):
+                    raise RuntimeError(f"Processing finished but output file not found: {out_path}")
 
-        st.write("Output path:", out_path)
-        if not out_path or not os.path.exists(out_path):
-            raise RuntimeError(f"Processing finished but output file not found: {out_path}")
+                logger.info(f"Processing complete | out={out_path}")
+                st.session_state.results = out_path
+                st.session_state.page = "results"
+                st.rerun()
 
-        logger.info(f"Processing complete | out={out_path}")
-        st.session_state.results = out_path
-        st.session_state.page = "results"
-        st.rerun()
+            except Exception as e:
+                logger.exception("Processing failed")
+                st.session_state.last_error = e
+                st.error("Processing failed (details below).")
+                st.exception(e)
 
-    except Exception as e:
-        logger.exception("Processing failed")
-        st.session_state.last_error = e
-        st.error("Processing failed (details below).")
-        st.exception(e)
 
 # ---------------- PAGE: Results ----------------
-elif st.session_state.page == "results":
+if st.session_state.page == "results":
     st.subheader("Results")
     st.video(st.session_state.results)
 
@@ -131,6 +131,10 @@ elif st.session_state.page == "results":
             file_name=os.path.basename(st.session_state.results),
         )
 
-    if st.button("🔙 Back"):
+    if st.button("🔁 Process another video", use_container_width=True):
         st.session_state.page = "upload"
         st.session_state.results = None
+        st.session_state.video_path = None
+        st.session_state.last_error = None
+        st.rerun()
+
