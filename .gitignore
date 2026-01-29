@@ -69,3 +69,6 @@ Thumbs.db
 *.mts
 *.m2ts
 
+# Streamlit / app logs
+logs/
+*.log
