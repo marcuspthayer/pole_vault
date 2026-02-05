@@ -4,6 +4,7 @@ import os
 import logging
 
 from pvapp.pipelines.skeleton_overlay import process_video_skeleton_overlay
+from pvapp.pipelines.hip_overlay import process_video_hip_overlay
 from pvapp.logging_utils import setup_logger
 
 st.set_page_config(page_title="AlphaPeak PV Analysis", layout="wide")
