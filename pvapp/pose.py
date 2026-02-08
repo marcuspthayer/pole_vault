@@ -1,31 +1,37 @@
 import logging
+import copy
 import cv2
 import mediapipe as mp
-from mediapipe.framework.formats import landmark_pb2
+from typing import TYPE_CHECKING
 
 from pv_yolo_utils import PersonDetector
 
 mp_pose = mp.solutions.pose
-
 logger = logging.getLogger("pv.pose")
 
-def landmarks_full_from_roi(lm_roi, roi_box, frame_w, frame_h, roi_w, roi_h):
-    """Convert ROI-normalized landmarks to full-frame normalized landmarks."""
+if TYPE_CHECKING:
+    from mediapipe.python.solutions.pose import Pose as MpPose
+
+
+def landmarks_full_from_roi(pose_landmarks, roi_box, frame_w, frame_h, roi_w, roi_h):
+    """Convert ROI-normalized landmarks to full-frame normalized landmarks.
+
+    NOTE: We avoid importing mediapipe.framework.formats.landmark_pb2 because some
+    MediaPipe wheels don't ship that module. Instead, we deep-copy the returned
+    pose_landmarks object and edit x/y in place.
+    """
     roi_x1, roi_y1, _, _ = roi_box
-    landmarks_full = []
-    for lm_i in lm_roi:
-        x_full = roi_x1 + (lm_i.x * roi_w)
-        y_full = roi_y1 + (lm_i.y * roi_h)
-        landmarks_full.append(
-            landmark_pb2.NormalizedLandmark(
-                x=float(x_full / frame_w),
-                y=float(y_full / frame_h),
-                z=float(lm_i.z),
-                visibility=float(getattr(lm_i, "visibility", 0.0)),
-                presence=float(getattr(lm_i, "presence", 0.0)),
-            )
-        )
-    return landmark_pb2.NormalizedLandmarkList(landmark=landmarks_full)
+
+    lms_full = copy.deepcopy(pose_landmarks)
+    for lm in lms_full.landmark:
+        x_full = roi_x1 + (lm.x * roi_w)
+        y_full = roi_y1 + (lm.y * roi_h)
+        lm.x = float(x_full / frame_w)
+        lm.y = float(y_full / frame_h)
+        # keep z/visibility/presence as-is
+
+    return lms_full
+
 
 def detect_person_roi(frame, detector: PersonDetector, margin: float = 0.30):
     """Detect largest person and return expanded ROI box (x1,y1,x2,y2) or None."""
@@ -57,13 +63,9 @@ def detect_person_roi(frame, detector: PersonDetector, margin: float = 0.30):
     logger.debug(f"ROI box: {roi_box} (margin={margin})")
     return roi_box
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from mediapipe.python.solutions.pose import Pose as MpPose
 
 def run_pose_on_frame(frame_bgr, pose: "MpPose", roi_box):
-    """Run MediaPipe Pose on ROI and return full-frame NormalizedLandmarkList or None."""
+    """Run MediaPipe Pose on ROI and return full-frame landmarks or None."""
     if roi_box is None:
         return None
 
@@ -77,10 +79,18 @@ def run_pose_on_frame(frame_bgr, pose: "MpPose", roi_box):
     image_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
     image_rgb.flags.writeable = False
     results = pose.process(image_rgb)
+
     if not results.pose_landmarks:
         logger.debug("No pose landmarks found in ROI")
         return None
 
-    lms = landmarks_full_from_roi(results.pose_landmarks.landmark, roi_box, frame_w, frame_h, roi_w, roi_h)
+    lms = landmarks_full_from_roi(
+        results.pose_landmarks,  # <-- pass the whole object now
+        roi_box,
+        frame_w,
+        frame_h,
+        roi_w,
+        roi_h,
+    )
     logger.debug("Pose landmarks converted to full-frame")
     return lms
