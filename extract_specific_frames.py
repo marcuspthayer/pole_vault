@@ -49,6 +49,30 @@ def extract_frames(cap, center_frame_idx, output_dir, video_name, neighbor_count
         
     print(f"Saved {saved_count} frames centered at {center_frame_idx} to {output_dir}")
 
+def extract_incremental_frames(cap, start_f, end_f, fps, output_dir, video_name):
+    """Extracts frames every 0.25 seconds between start and end."""
+    if start_f is None or end_f is None:
+        print("Start or End frame not set.")
+        return
+    
+    if start_f > end_f:
+        start_f, end_f = end_f, start_f
+        
+    step = max(1, int(fps * 0.25))
+    saved_count = 0
+    
+    for f_idx in range(start_f, end_f + 1, step):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
+        ret, frame = cap.read()
+        if not ret:
+            break
+            
+        out_path = output_dir / f"{video_name}_incremental_{f_idx:06d}.jpg"
+        cv2.imwrite(str(out_path), frame)
+        saved_count += 1
+        
+    print(f"Saved {saved_count} incremental frames from {start_f} to {end_f} to {output_dir}")
+
 def process_video(video_path, output_root):
     """Handles the interactive loop for a single video."""
     cap = cv2.VideoCapture(str(video_path))
@@ -58,17 +82,15 @@ def process_video(video_path, output_root):
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps <= 0: fps = 30.0 # Fallback
     video_name = video_path.stem
     
-    # Create output directory for this video (or shared? User asked for "an output directory", 
-    # but grouping by video might be cleaner. Let's put them all in one folder but distinct names)
-    # Re-reading: "extract_frames folder inside the selected input directory"
-    # let's just make one shared folder "extracted_frames"
-    output_dir = output_root # / "extracted_frames" # Passed in
+    output_dir = output_root
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Start at 50%
     current_frame = total_frames // 2
+    start_frame = None
+    end_frame = None
     
     cv2.namedWindow("Frame Extractor", cv2.WINDOW_NORMAL)
     
@@ -88,21 +110,25 @@ def process_video(video_path, output_root):
             # Draw HUD
             h, w = frame.shape[:2]
             info_text = f"Frame: {current_frame}/{total_frames} ({video_name})"
-            controls_text = "A/D: -/+1 | Q/E: -/+10 | Z/C: -/+50 | Space: Save | Esc: Next Video"
+            interval_text = f"Start: {start_frame if start_frame is not None else '-'} | End: {end_frame if end_frame is not None else '-'}"
+            controls_text = "A/D: -/+1 | Q/E: -/+10 | Z/C: -/+50 | [: Set Start | ]: Set End | Enter: Incr. Extr. | Space: Save 5 | Esc: Next"
             
             draw_text(frame, info_text, pos=(10, 30))
-            draw_text(frame, controls_text, pos=(10, h - 20), scale=0.6)
+            draw_text(frame, interval_text, pos=(10, 60), color=(255, 255, 0))
+            draw_text(frame, controls_text, pos=(10, h - 20), scale=0.5)
             
-            cv2.imshow("Frame Extractor", frame)
+            # Scaling 200%
+            disp_frame = cv2.resize(frame, (w * 2, h * 2), interpolation=cv2.INTER_LINEAR)
+            cv2.imshow("Frame Extractor", disp_frame)
             redraw = False
 
         key = cv2.waitKey(0) & 0xFF
 
         # Navigation
-        if key == ord('d'): # Right arrow / D
+        if key == ord('d'): # D
             current_frame += 1
             redraw = True
-        elif key == ord('a'): # Left arrow / A
+        elif key == ord('a'): # A
             current_frame -= 1
             redraw = True
         elif key == ord('e'): # E
@@ -118,22 +144,41 @@ def process_video(video_path, output_root):
             current_frame -= 50
             redraw = True
         
-        # Save
+        # Set Start/End
+        elif key == ord('['):
+            start_frame = current_frame
+            redraw = True
+        elif key == ord(']'):
+            end_frame = current_frame
+            redraw = True
+            
+        # Incremental Extraction
+        elif key == 13: # Enter
+            if start_frame is not None and end_frame is not None:
+                print(f"Running incremental extraction from {start_frame} to {end_frame}...")
+                extract_incremental_frames(cap, start_frame, end_frame, fps, output_dir, video_name)
+                # Visual feedback
+                cv2.putText(disp_frame, "INCREMENTAL SAVED!", (w - 200, h), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
+                cv2.imshow("Frame Extractor", disp_frame)
+                cv2.waitKey(500)
+                redraw = True
+            else:
+                print("Please set both Start ([) and End (]) frames.")
+
+        # Save Specific
         elif key == 32: # Space
             print(f"Saving sequence at frame {current_frame}...")
-            # Visual feedback
-            temp_frame = frame.copy()
-            draw_text(temp_frame, "SAVING...", pos=(w//2 - 50, h//2), color=(0, 0, 255), scale=2.0)
-            cv2.imshow("Frame Extractor", temp_frame)
-            cv2.waitKey(1) # Force update
+            # Visual feedback on disp_frame (already scaled)
+            cv2.putText(disp_frame, "SAVING...", (w - 100, h), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+            cv2.imshow("Frame Extractor", disp_frame)
+            cv2.waitKey(1)
             
             extract_frames(cap, current_frame, output_dir, video_name)
             
-            # Show "Saved" briefly
-            draw_text(temp_frame, "SAVED!", pos=(w//2 - 50, h//2), color=(255, 0, 0), scale=2.0)
-            cv2.imshow("Frame Extractor", temp_frame)
+            cv2.putText(disp_frame, "SAVED!", (w - 100, h), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
+            cv2.imshow("Frame Extractor", disp_frame)
             cv2.waitKey(500)
-            redraw = True # Reload original frame to clear text
+            redraw = True
             
         # Exit / Next
         elif key == 27: # Esc
