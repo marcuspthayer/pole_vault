@@ -75,3 +75,7 @@ logs/
 
 # Claude
 .claude/
+
+# VaultSense runtime data
+/data/
+debug_output/

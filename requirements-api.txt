@@ -3,5 +3,7 @@ numpy<2
 pandas
 mediapipe==0.10.9
 ultralytics
-streamlit
 imageio-ffmpeg
+fastapi
+uvicorn[standard]
+python-multipart
