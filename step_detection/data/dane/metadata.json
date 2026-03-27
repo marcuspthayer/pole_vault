@@ -1,0 +1,11 @@
+{
+  "video_name": "dane.MOV",
+  "fps": 239.4865987164968,
+  "width": 1920,
+  "height": 1080,
+  "total_frames": 793,
+  "processed_start": 0,
+  "processed_end": 234,
+  "label_count": 148,
+  "date_labeled": "2026-03-16T17:41:39.674155"
+}

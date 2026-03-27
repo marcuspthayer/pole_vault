@@ -1,0 +1,11 @@
+{
+  "video_name": "tyce_good.MOV",
+  "fps": 239.48037277605195,
+  "width": 1920,
+  "height": 1080,
+  "total_frames": 1060,
+  "processed_start": 360,
+  "processed_end": 670,
+  "label_count": 166,
+  "date_labeled": "2026-03-10T20:23:06.195481"
+}

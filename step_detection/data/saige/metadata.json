@@ -1,0 +1,11 @@
+{
+  "video_name": "saige.MOV",
+  "fps": 239.48232204820408,
+  "width": 1920,
+  "height": 1080,
+  "total_frames": 1064,
+  "processed_start": 265,
+  "processed_end": 634,
+  "label_count": 224,
+  "date_labeled": "2026-03-16T18:38:19.883381"
+}

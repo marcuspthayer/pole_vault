@@ -72,3 +72,6 @@ Thumbs.db
 # Streamlit / app logs
 logs/
 *.log
+
+# Claude
+.claude/

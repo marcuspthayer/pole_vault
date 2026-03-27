@@ -1,0 +1,11 @@
+{
+  "video_name": "tyce_bad.MOV",
+  "fps": 239.4839531735287,
+  "width": 1920,
+  "height": 1080,
+  "total_frames": 1253,
+  "processed_start": 355,
+  "processed_end": 653,
+  "label_count": 149,
+  "date_labeled": "2026-03-16T18:24:02.083368"
+}
