@@ -1,0 +1,30 @@
+# Exclude large directories not needed in the Docker image
+Archived/
+GaitKeeper_Reference_Files/
+Sprint_Analysis_Reference/
+legacy/
+videos/
+debug_output/
+logs/
+step_detection/data/
+
+# Dev/tooling noise
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.git/
+.github/
+.vscode/
+.idea/
+
+# Unused model file (v2 is legacy, we only use v3)
+pole_detect_v2.pt
+
+# Streamlit app (not needed in API container)
+polevaultapp_modular.py
+
+# Docs
+*.md
+*.docx

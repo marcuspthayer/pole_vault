@@ -11,7 +11,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python dependencies (API-only, no Streamlit)
+# Install CPU-only PyTorch FIRST to prevent ultralytics from pulling the 2GB CUDA build
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining dependencies (API-only, no Streamlit)
 COPY requirements-api.txt .
 RUN pip install --no-cache-dir -r requirements-api.txt
 
