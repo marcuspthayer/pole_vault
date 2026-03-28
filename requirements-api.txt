@@ -1,5 +1,5 @@
 opencv-contrib-python-headless
-numpy<2
+numpy>=1.24,<2
 pandas
 mediapipe==0.10.9
 ultralytics
