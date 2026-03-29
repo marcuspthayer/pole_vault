@@ -206,17 +206,21 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
                 metrics["cadence_spm"] = round(sum(cadences) / len(cadences), 1)
 
         if max_hip_height_data:
-            mhh = max_hip_height_data.get("max_hip_height_m")
+            mhh = max_hip_height_data.get("height_m")
             if mhh:
                 metrics["max_hip_height_m"] = round(mhh, 3)
+                pc = max_hip_height_data.get("predicted_clear_m")
+                if pc:
+                    metrics["predicted_clear_m"] = round(pc, 3)
+                    metrics["predicted_clear_in"] = round(pc * 39.3701, 1)
 
         if bend_data:
-            max_bend = max((b.get("chord_ratio", 0) for b in bend_data), default=None)
-            if max_bend:
-                metrics["max_pole_bend_pct"] = round(max_bend * 100, 1)
+            chord_ratios = [b.get("chord_ratio") for b in bend_data if b.get("chord_ratio") is not None]
+            if chord_ratios:
+                metrics["max_pole_bend_pct"] = round(max(chord_ratios) * 100, 1)
 
         if velocity_data and len(velocity_data) > 0:
-            vels = [v.get("velocity_ms", 0) for v in velocity_data if v.get("velocity_ms")]
+            vels = [v.get("velocity_m_s", 0) for v in velocity_data if v.get("velocity_m_s")]
             if vels:
                 metrics["peak_velocity_ms"] = round(max(vels), 2)
                 metrics["avg_velocity_ms"] = round(sum(vels) / len(vels), 2)
