@@ -1,0 +1,21 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - vaultsense_data:/data
+      # Mount source dirs so Python code changes take effect on container restart
+      # without a full image rebuild (only needed when requirements or models change)
+      - ./api:/app/api
+      - ./pvapp:/app/pvapp
+    environment:
+      PORT: "8000"
+      DATA_DIR: /data
+      PYTHONUNBUFFERED: "1"
+      # localhost:3000 is already in the default ALLOWED_ORIGINS in api/main.py
+
+volumes:
+  vaultsense_data:
