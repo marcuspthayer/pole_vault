@@ -29,7 +29,7 @@ def extract_pole_data(video_path: str, model_path="pole_detector_v3.pt", conf=0.
     if end_frame is None:
         end_frame = total_frames - 1
         
-    start_frame = max(0, start_frame)
+    start_frame = max(0, start_frame) if start_frame is not None else 0
     end_frame = min(end_frame, total_frames - 1)
     
     # Pre-fill with None

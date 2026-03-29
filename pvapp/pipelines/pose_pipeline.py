@@ -39,7 +39,7 @@ def extract_pose_data(video_path: str, yolo_model_path="yolo11n.pt", conf=0.25, 
     if end_frame is None:
         end_frame = total_frames - 1
         
-    start_frame = max(0, start_frame)
+    start_frame = max(0, start_frame) if start_frame is not None else 0
     end_frame = min(end_frame, total_frames - 1)
     
     # Initialize YOLO Detector
