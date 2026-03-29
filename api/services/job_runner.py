@@ -73,7 +73,7 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
     import sys
     import os as _os
     # Ensure the repo root is on the path inside the subprocess
-    repo_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    repo_root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
     if repo_root not in sys.path:
         sys.path.insert(0, repo_root)
 
