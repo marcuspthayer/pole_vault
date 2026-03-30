@@ -8,6 +8,28 @@ mp_pose = mp.solutions.pose
 from mediapipe.framework.formats import landmark_pb2
 from pvapp.core.detector import PersonDetector
 
+
+class PoseResultWrapper:
+    def __init__(self, mp_result, roi_box):
+        self.pose_landmarks = mp_result.pose_landmarks
+        self.roi_box = roi_box
+
+
+class ROIBoxSmoother:
+    def __init__(self, window_size=5):
+        self.window_size = window_size
+        self.history = []
+
+    def smooth(self, bbox):
+        if bbox is None:
+            return None
+        self.history.append(bbox)
+        if len(self.history) > self.window_size:
+            self.history.pop(0)
+        arr = np.array(self.history)
+        return tuple(arr.mean(axis=0).astype(int))
+
+
 def extract_pose_data(video_path: str, yolo_model_path="yolo11n.pt", conf=0.25, start_frame=0, end_frame=None, progress_callback=None, device=None):
     """
     Run MediaPipe Pose on the video, guided by YOLO person detection.
@@ -51,36 +73,6 @@ def extract_pose_data(video_path: str, yolo_model_path="yolo11n.pt", conf=0.25, 
     # Seek to start
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     
-    # Use valid class for results to mimic MediaPipe structure if we modify it, 
-    # but here we will return a simple object/dict or modified result.
-    # Actually, let's return a simple class or just attach roi_box to the result.
-    class PoseResultWrapper:
-        def __init__(self, mp_result, roi_box):
-            self.pose_landmarks = mp_result.pose_landmarks
-            self.roi_box = roi_box
-
-    # ROI Smoothing Class
-    class ROIBoxSmoother:
-        def __init__(self, window_size=5):
-            self.window_size = window_size
-            self.history = []
-
-        def smooth(self, bbox):
-            """
-            bbox: (x1, y1, x2, y2)
-            Returns smoothed (x1, y1, x2, y2)
-            """
-            if bbox is None:
-                return None
-            
-            self.history.append(bbox)
-            if len(self.history) > self.window_size:
-                self.history.pop(0)
-            
-            # Average
-            avg_box = np.mean(self.history, axis=0)
-            return tuple(avg_box.astype(int))
-
     # Import the new stabilizer
     from pvapp.core.pose_stabilization import PoseStabilizer
 
