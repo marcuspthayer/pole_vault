@@ -233,13 +233,11 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
         _write_job(job)
         _write_progress(1.0, "Analysis complete")
 
-        # Clean up large files to free disk space
-        input_p = _Path(input_path)
-        if input_p.exists():
-            input_p.unlink()
-        pkl_p = _Path(str(jdir / "precomputed.pkl"))
-        if pkl_p.exists():
-            pkl_p.unlink()
+        # Clean up large intermediate files immediately — keep output.mp4 for user to view/download
+        for large_file in ["input.mp4", "precomputed.pkl"]:
+            p = _Path(str(jdir / large_file))
+            if p.exists():
+                p.unlink()
 
         return {"status": "complete", "metrics": metrics, "result_files": result_files}
 
@@ -305,7 +303,8 @@ async def submit_job(job_id: str) -> None:
 
 
 async def cleanup_old_jobs() -> None:
-    """Periodic task: delete jobs older than JOB_TTL_SECONDS."""
+    """Periodic task: delete large files from jobs older than JOB_TTL_SECONDS.
+    Keeps small files (job.json, CSVs, debug images) permanently for user history."""
     while True:
         await asyncio.sleep(120)  # check every 2 minutes
         now = time.time()
@@ -318,8 +317,11 @@ async def cleanup_old_jobs() -> None:
                     job = json.load(f)
                 created = job.get("created_at", now)
                 if now - created > JOB_TTL_SECONDS:
-                    import shutil
-                    shutil.rmtree(jdir, ignore_errors=True)
-                    logger.info(f"Cleaned up expired job {jdir.name}")
+                    # Delete only large files, keep metrics/CSVs/debug images
+                    for large_file in ["output.mp4", "input.mp4", "precomputed.pkl"]:
+                        p = jdir / large_file
+                        if p.exists():
+                            p.unlink()
+                    logger.info(f"Cleaned up large files from expired job {jdir.name}")
         except Exception as e:
             logger.warning(f"Cleanup error: {e}")
