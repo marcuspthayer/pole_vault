@@ -4,11 +4,18 @@ from enum import Enum
 
 
 class JobStatus(str, Enum):
+    created = "created"
     queued = "queued"
     running = "running"
     pass1_done = "pass1_done"
     complete = "complete"
     failed = "failed"
+
+
+class StartConfig(BaseModel):
+    start_frame: Optional[int] = None
+    plant_frame: Optional[int] = None
+    end_frame: Optional[int] = None
 
 
 class JobConfig(BaseModel):
@@ -44,6 +51,8 @@ class JobMetrics(BaseModel):
     peak_velocity_ms: Optional[float] = None
     avg_velocity_ms: Optional[float] = None
     takeoff_velocity_ms: Optional[float] = None
+    predicted_clear_m: Optional[float] = None
+    predicted_clear_in: Optional[float] = None
 
 
 class JobResultFiles(BaseModel):

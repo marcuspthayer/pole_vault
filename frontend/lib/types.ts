@@ -1,6 +1,12 @@
 // Mirrors api/models/job.py — keep in sync
 
-export type JobStatus = 'queued' | 'running' | 'pass1_done' | 'complete' | 'failed';
+export type JobStatus = 'created' | 'queued' | 'running' | 'pass1_done' | 'complete' | 'failed';
+
+export interface StartConfig {
+  start_frame?: number;
+  plant_frame?: number;
+  end_frame?: number;
+}
 
 export interface JobConfig {
   athlete_height_m?: number;
@@ -33,6 +39,25 @@ export interface JobMetrics {
   takeoff_velocity_ms?: number;
   predicted_clear_m?: number;
   predicted_clear_in?: number;
+}
+
+// Data rows from CSV downloads
+export interface VelocityRow {
+  frame: number;
+  time_s: number;
+  velocity_m_s: number;
+  velocity_mph: number;
+  hip_x_px: number;
+}
+
+export interface StrideRow {
+  frame: number;
+  stride_norm: number;
+  frames_dur: number;
+  side: 'left' | 'right';
+  cadence_spm?: number;
+  stride_cm?: number;
+  stride_in?: number;
 }
 
 export interface JobResultFiles {

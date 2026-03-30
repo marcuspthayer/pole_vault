@@ -2,77 +2,62 @@
 
 import { useState } from 'react';
 import { apiClient } from '@/lib/api-client';
-import type { Pass2Config } from '@/lib/types';
+import type { StartConfig } from '@/lib/types';
 
 interface Props {
   jobId: string;
   totalFrames: number;
   fps: number;
-  startFrame: number;
-  plantFrame: number;
-  endFrame: number;
-  onSubmit: (config: Pass2Config) => void;
+  onSubmit: (config: StartConfig) => void;
   loading: boolean;
 }
 
 interface FrameDef {
-  key: keyof Pass2Config;
+  key: keyof StartConfig;
   label: string;
   description: string;
 }
 
-const FRAME_DEFS: FrameDef[] = [
-  { key: 'phase1_frame',     label: 'Phase 1 Frame',  description: 'Tip-to-bottom-hand, pole should be straight' },
-  { key: 'phase2_frame',     label: 'Phase 2 Frame',  description: 'Top-hand-to-bottom-hand, around plant' },
-  { key: 'plant_frame',      label: 'Plant Frame',    description: 'For tip reconstruction, needs solid mask' },
-  { key: 'bend_start_frame', label: 'Max Bend Start', description: 'Start of search window for maximum pole bend' },
-  { key: 'bend_end_frame',   label: 'Max Bend End',   description: 'End of search window for maximum pole bend' },
+const FRAMES: FrameDef[] = [
+  { key: 'start_frame', label: '1. Start Frame', description: 'First step of the approach run' },
+  { key: 'plant_frame', label: '2. Plant Frame', description: 'Pole tip enters the box' },
+  { key: 'end_frame',   label: '3. End Frame',   description: 'Athlete lands or leaves frame' },
 ];
 
-export function FrameSelector({
-  jobId, totalFrames, fps,
-  startFrame, plantFrame, endFrame,
-  onSubmit, loading,
-}: Props) {
+export function InitialFrameSelector({ jobId, totalFrames, fps, onSubmit, loading }: Props) {
   const [frames, setFrames] = useState<Record<string, number>>({
-    phase1_frame: Math.min(startFrame + 5, totalFrames - 1),
-    phase2_frame: plantFrame,
-    plant_frame: plantFrame,
-    bend_start_frame: Math.min(plantFrame + Math.round(0.1 * fps), endFrame),
-    bend_end_frame: Math.min(plantFrame + Math.round(0.25 * fps), endFrame),
+    start_frame: 0,
+    plant_frame: Math.round(totalFrames * 0.8),
+    end_frame: totalFrames - 1,
   });
+  const [fullVideo, setFullVideo] = useState(false);
 
   function setFrame(key: string, value: number) {
     setFrames(prev => ({ ...prev, [key]: Math.max(0, Math.min(totalFrames - 1, value)) }));
   }
 
-  const allSet = FRAME_DEFS.every(f => frames[f.key] !== undefined);
-
   function handleSubmit() {
-    if (!allSet) return;
-    onSubmit(frames as unknown as Pass2Config);
+    if (fullVideo) {
+      onSubmit({});
+    } else {
+      onSubmit({
+        start_frame: frames.start_frame,
+        plant_frame: frames.plant_frame,
+        end_frame: frames.end_frame,
+      });
+    }
   }
 
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-xl font-semibold">Select pole frames</h2>
+        <h2 className="text-xl font-semibold">Select key frames</h2>
         <p className="text-gray-400 text-sm mt-1">
-          Review the annotated frames below. Select frames where the pole mask is clean and accurate.
+          Identify the start of the approach, the pole plant, and end of the vault.
         </p>
       </div>
 
-      {/* Pass 1 output video */}
-      <div className="space-y-2">
-        <h3 className="text-sm font-medium text-gray-400">Pass 1 output (reference)</h3>
-        <video
-          src={apiClient.getResultFileUrl(jobId, 'output.mp4')}
-          controls
-          className="w-full rounded-xl"
-        />
-      </div>
-
-      {FRAME_DEFS.map(({ key, label, description }) => {
+      {FRAMES.map(({ key, label, description }) => {
         const val = frames[key];
         const timeSec = (val / fps).toFixed(2);
         return (
@@ -87,11 +72,11 @@ export function FrameSelector({
               </span>
             </div>
 
-            {/* Annotated frame preview from output.mp4 */}
+            {/* Frame preview */}
             <div className="relative bg-black rounded-lg overflow-hidden aspect-video">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={apiClient.getFrameUrl(jobId, val, 'output')}
+                src={apiClient.getFrameUrl(jobId, val)}
                 alt={`${label}: frame ${val}`}
                 className="w-full h-full object-contain"
               />
@@ -126,12 +111,28 @@ export function FrameSelector({
         );
       })}
 
+      <div className="flex items-center gap-2 text-sm text-gray-400">
+        <input
+          type="checkbox"
+          id="fullVideo"
+          checked={fullVideo}
+          onChange={e => setFullVideo(e.target.checked)}
+          className="accent-blue-500"
+        />
+        <label htmlFor="fullVideo">Ignore sliders (process full video)</label>
+      </div>
+
+      <p className="text-xs text-gray-500">
+        Analysis window: frame {frames.start_frame} → {frames.end_frame}
+        {' '}({((frames.end_frame - frames.start_frame) / fps).toFixed(1)}s)
+      </p>
+
       <button
         onClick={handleSubmit}
-        disabled={!allSet || loading}
-        className="w-full py-3 rounded-xl bg-green-600 hover:bg-green-700 text-white font-semibold disabled:opacity-40"
+        disabled={loading}
+        className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold disabled:opacity-40"
       >
-        {loading ? 'Running final analysis…' : 'Finalize Analysis'}
+        {loading ? 'Starting…' : 'Run Analysis'}
       </button>
     </div>
   );

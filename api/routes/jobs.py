@@ -12,7 +12,7 @@ import cv2
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
 
-from api.models.job import JobConfig, JobResponse, Pass2Config
+from api.models.job import JobConfig, JobResponse, Pass2Config, StartConfig
 from api.services.job_runner import (
     create_job, submit_job, read_job, write_job,
     read_progress, jobs_dir, job_dir, DATA_DIR
@@ -27,6 +27,7 @@ MAX_UPLOAD_BYTES = 500 * 1024 * 1024  # 500 MB
 async def create_analysis_job(
     video: UploadFile = File(...),
     config: str = Form("{}"),
+    auto_start: str = Form("true"),
 ):
     """Upload a video and queue an analysis job."""
     video_bytes = await video.read()
@@ -39,8 +40,34 @@ async def create_analysis_job(
     except Exception as e:
         raise HTTPException(422, f"Invalid config: {e}")
 
-    job = await create_job(video_bytes, video.filename or "input.mp4", config_dict)
-    await submit_job(job["job_id"])
+    should_start = auto_start.lower() not in ("false", "0", "no")
+    job = await create_job(video_bytes, video.filename or "input.mp4", config_dict,
+                           status="queued" if should_start else "created")
+    if should_start:
+        await submit_job(job["job_id"])
+    return job
+
+
+@router.post("/{job_id}/start", status_code=202)
+async def start_analysis(job_id: str, start_config: StartConfig):
+    """Set frame selections and start processing."""
+    job = read_job(job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found")
+    if job["status"] != "created":
+        raise HTTPException(409, f"Job is not in created state (current: {job['status']})")
+
+    # Merge frame selections into config
+    if start_config.start_frame is not None:
+        job["config"]["start_frame"] = start_config.start_frame
+    if start_config.plant_frame is not None:
+        job["config"]["plant_frame"] = start_config.plant_frame
+    if start_config.end_frame is not None:
+        job["config"]["end_frame"] = start_config.end_frame
+
+    job["status"] = "queued"
+    write_job(job_id, job)
+    await submit_job(job_id)
     return job
 
 
@@ -100,12 +127,13 @@ async def stream_job_progress(job_id: str):
 
 
 @router.get("/{job_id}/frame")
-async def get_frame(job_id: str, frame_idx: int = 0):
-    """Extract a single frame from the uploaded video as JPEG."""
+async def get_frame(job_id: str, frame_idx: int = 0, source: str = "input"):
+    """Extract a single frame from the video as JPEG. source=input|output."""
     jdir = jobs_dir() / job_id
-    input_path = jdir / "input.mp4"
+    video_file = "output.mp4" if source == "output" else "input.mp4"
+    input_path = jdir / video_file
     if not input_path.exists():
-        raise HTTPException(404, "Video not found (may have been cleaned up)")
+        raise HTTPException(404, f"Video '{video_file}' not found (may have been cleaned up)")
 
     cap = cv2.VideoCapture(str(input_path))
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))

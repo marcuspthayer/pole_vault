@@ -232,11 +232,6 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
         _write_job(job)
         _write_progress(1.0, "Analysis complete")
 
-        # Clean up input video to save disk space
-        input_p = _Path(input_path)
-        if input_p.exists():
-            input_p.unlink()
-
         return {"status": "complete", "metrics": metrics, "result_files": result_files}
 
     except Exception as e:
@@ -249,7 +244,7 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
         return {"status": "failed", "error": str(e), "traceback": err}
 
 
-async def create_job(video_bytes: bytes, filename: str, config: dict) -> dict:
+async def create_job(video_bytes: bytes, filename: str, config: dict, status: str = "queued") -> dict:
     """
     Save uploaded video and create job record. Returns job metadata dict.
     """
@@ -272,7 +267,7 @@ async def create_job(video_bytes: bytes, filename: str, config: dict) -> dict:
 
     job = {
         "job_id": job_id,
-        "status": "queued",
+        "status": status,
         "progress": 0.0,
         "message": "",
         "config": config,
