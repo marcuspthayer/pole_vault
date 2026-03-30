@@ -20,7 +20,7 @@ logger = logging.getLogger("vaultsense.job_runner")
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 JOBS_DIR = DATA_DIR / "jobs"
-JOB_TTL_SECONDS = 600  # 10 minutes — results are ephemeral, users download what they need
+JOB_TTL_SECONDS = 1800  # 30 minutes — enough time for both passes + viewing results
 
 # Single global executor — 1 worker to stay within RAM budget
 _executor = ProcessPoolExecutor(max_workers=1)
@@ -303,8 +303,9 @@ async def submit_job(job_id: str) -> None:
 
 
 async def cleanup_old_jobs() -> None:
-    """Periodic task: delete large files from jobs older than JOB_TTL_SECONDS.
-    Keeps small files (job.json, CSVs, debug images) permanently for user history."""
+    """Periodic task: delete large files from completed jobs older than JOB_TTL_SECONDS.
+    Keeps small files (job.json, CSVs, debug images) permanently for user history.
+    Never touches jobs that are still in progress (created, queued, running, pass1_done)."""
     while True:
         await asyncio.sleep(120)  # check every 2 minutes
         now = time.time()
@@ -315,6 +316,10 @@ async def cleanup_old_jobs() -> None:
                     continue
                 with open(job_file) as f:
                     job = json.load(f)
+                status = job.get("status", "")
+                # Only clean up completed or failed jobs — never in-progress ones
+                if status not in ("complete", "failed"):
+                    continue
                 created = job.get("created_at", now)
                 if now - created > JOB_TTL_SECONDS:
                     # Delete only large files, keep metrics/CSVs/debug images
