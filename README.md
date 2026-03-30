@@ -1,170 +1,214 @@
-# ⚡ AlphaForm: Pole Vault Analysis
+# VaultSense
 
-**AI-powered biomechanical analysis for pole vault approach runs.**
+AI-powered pole vault biomechanics analysis. Upload a video, select key frames, and get detailed metrics on approach velocity, stride cadence, pole bend, hip height, and predicted bar clearance — with benchmark comparisons and AI coaching insights.
 
-AlphaForm is a Streamlit-based video analysis tool that combines **YOLO object detection**, **MediaPipe pose estimation**, and **computer vision** to provide coaches and athletes with detailed, frame-by-frame biomechanical insights from pole vault videos.
-
----
-
-## ▶ Features
-
-### ▪ Skeleton Overlay
-Full-body pose estimation with real-time skeleton rendering on video. Uses YOLO for athlete detection and MediaPipe Pose for 33-landmark body tracking, with a custom `PoseStabilizer` to eliminate jitter and left/right limb swaps.
-
-### ▪ Approach Hip Analysis
-Measures how much the athlete's hips sag during the approach run — a key indicator of fatigue or form breakdown. Reports:
-- **Worst-case hip droop** (worst 5% of frames as % of body height)
-- **Hip sag trend** (late approach vs. early baseline)
-- Visual hip path overlay on the output video
-
-### ▪ Gait / Step Analysis
-Detects individual foot strikes from ankle trajectory data and computes:
-- **Step count** and **cadence** (steps per minute)
-- **Stride length in cm and inches** — automatically calibrated using the athlete's height input. The system finds the frame near the plant where the athlete is most upright (eye-to-ankle measurement with skull correction), establishes a meters-per-pixel scale, and converts all distances to real-world units. A visual height-reference indicator is drawn on the calibration frame in the output video.
-- **Max hip height** — measures the peak vertical position of the hip midpoint between the plant and end frames, relative to the lowest foot point (heel/toe) near the plant. Displayed in feet/inches and meters both on-video (persistent magenta dot + label from the peak frame onward) and in the Streamlit results panel.
-- **Foot path visualization** with detected contact points
-- Missing step interpolation for occluded frames
-- Exportable CSV with per-frame ankle coordinates and step flags
-
-### ▪ Pole Detection & Bend Tracking
-Uses a custom-trained **YOLOv8 segmentation model** to detect and segment the pole in every frame:
-- **Two-phase pole calibration** via skeletonization + arc-length consensus clustering
-- **Pole bend progression** — tracks chord-length ratio from plant to peak bend
-- Debug visualizations for calibration frames and max-bend state
-
-### ▪ Data Export
-- Annotated output video (MP4) with all selected overlays
-- Stride analysis plots (stride length vs. step number)
-- Ankle path plots with foot-strike markers
-- Gait analysis CSV export
-- Downloadable debug images for pole calibration and bend
+**Live app:** [vaultsense.app](https://vaultsense.app)
+**API:** [api.vaultsense.app/health](https://api.vaultsense.app/health)
 
 ---
 
-## ▶ Project Structure
+## How It Works
+
+VaultSense uses a **two-pass analysis pipeline**:
+
+**Pass 1** — You upload a video and select three key frames (start of approach, pole plant, end of vault). The backend runs YOLO person detection + MediaPipe pose estimation on every frame, plus YOLO pole segmentation. This produces an annotated video with skeleton overlays and pole masks.
+
+**Pass 2** — You review the annotated frames and select five pole reference frames (phase 1 calibration, phase 2 calibration, plant, max bend start, max bend end). The backend uses these to compute calibrated pole length, bend progression, approach velocity, stride analysis, hip height, and predicted bar clearance.
+
+The result is a full biomechanics report with charts, debug images, downloadable CSVs, and optional AI-generated coaching recommendations.
+
+---
+
+## Architecture & Stack
 
 ```
-polevault/
-├── polevaultapp_modular.py      # Streamlit app (main entry point)
-├── requirements.txt             # Python dependencies
-├── pole_detector_v3.pt            # Custom YOLOv8 pole segmentation model
-├── yolo11n.pt                   # YOLO person detection model
-├── args.yaml                    # Model training configuration
-│
-├── pvapp/                       # Core application package
-│   ├── __init__.py
-│   ├── pose.py                  # Pose detection helpers (ROI + MediaPipe)
-│   ├── render.py                # Drawing utilities (skeleton rendering)
-│   ├── logging_utils.py         # Logging configuration
-│   │
-│   ├── core/                    # Analysis modules
-│   │   ├── analysis.py          # Hip height time-series & hip-drop computation
-│   │   ├── detector.py          # PersonDetector (YOLO wrapper with fallback)
-│   │   ├── gait_analysis.py     # Foot strike detection, cadence, stride length, height calibration, max hip height
-│   │   ├── pole_length.py       # Pole calibration, skeletonization, bend analysis
-│   │   ├── pole_manager.py      # Pole detection state management
-│   │   └── pose_stabilization.py# PoseStabilizer (smoothing, anti-swap logic)
-│   │
-│   ├── pipelines/               # End-to-end processing pipelines
-│   │   ├── unified_pipeline.py  # Main pipeline orchestrating all analyses
-│   │   ├── pose_pipeline.py     # Pose extraction pipeline
-│   │   ├── pole_pipeline.py     # Pole extraction pipeline
-│   │   ├── hip_analysis.py      # Standalone hip analysis pipeline
-│   │   ├── hip_overlay.py       # Hip visualization overlay
-│   │   └── skeleton_overlay.py  # Standalone skeleton overlay pipeline
-│   │
-│   └── utils/
-│       └── cv_utils.py          # OpenCV drawing helpers
-│
-├── legacy/                      # Archived earlier implementations
-├── GaitKeeper_Reference_Files/  # Reference code (TypeScript gait metrics)
-├── Sprint_Analysis_Reference/   # Reference code (sprint analysis functions)
-└── debug_output/                # Generated debug images (gitignored)
+                    Cloudflare (DNS + SSL)
+                    /                    \
+    vaultsense.app                api.vaultsense.app
+         |                               |
+      Vercel                          Railway
+    (Next.js)                       (FastAPI)
+         |                               |
+    Supabase                     YOLO + MediaPipe
+  (Auth + DB)                   (Video Processing)
+```
+
+### Why this architecture
+
+The app has two fundamentally different workloads: a lightweight frontend serving HTML/JS, and a heavyweight backend running ML models (YOLO, MediaPipe, PyTorch) on video frames. Separating them means the frontend scales independently on Vercel's edge network while the ML backend gets dedicated RAM and CPU on Railway.
+
+| Layer | Service | Why |
+|---|---|---|
+| **Frontend** | [Vercel](https://vercel.com) (Next.js) | Zero-config deploys from GitHub, edge CDN, free hobby tier. Next.js gives us server components for auth and API routes for the LLM proxy. |
+| **Backend API** | [Railway](https://railway.app) (FastAPI + Docker) | Supports Docker with persistent volumes for job storage. The container runs CPU-only PyTorch + YOLO + MediaPipe — Railway's 4GB RAM tier handles this without needing a GPU. Auto-deploys on push to main. |
+| **Auth & Database** | [Supabase](https://supabase.com) (Postgres) | Built-in email auth with Row-Level Security. Coach/athlete role isolation happens at the DB layer — no custom auth middleware needed. Free tier covers development. |
+| **DNS & SSL** | [Cloudflare](https://cloudflare.com) | Free SSL termination, DDoS protection, and DNS management. Proxies traffic to both Vercel and Railway. |
+| **LLM Coaching** | [Anthropic API](https://anthropic.com) (Claude Haiku) | Streaming coaching insights generated server-side in a Next.js API route. Runs on Vercel serverless — keeps Railway's RAM budget focused on video processing. |
+
+### Why not a GPU backend?
+
+CPU-only PyTorch processes a typical 5-second vault clip in 1-3 minutes. For a coaching tool where you upload one video at a time, this is acceptable. A GPU instance would cost $50-200/month for marginal speed improvement on short clips. If processing time becomes a bottleneck, Railway supports GPU instances as a drop-in upgrade.
+
+---
+
+## Project Structure
+
+```
+pole_vault/
+  api/                             # FastAPI backend (deployed to Railway)
+    routes/jobs.py                 # All endpoints: create, start, frame, pass2, results
+    models/job.py                  # Pydantic schemas (JobConfig, Pass2Config, etc.)
+    services/job_runner.py         # ProcessPoolExecutor wrapper around the pipeline
+    main.py                        # CORS, health check, lifespan
+
+  pvapp/                           # Core analysis engine (imported by api/)
+    pipelines/
+      unified_pipeline.py          # Main orchestrator: pose + pole + analysis + rendering
+      pose_pipeline.py             # YOLO person detection + MediaPipe pose extraction
+      pole_pipeline.py             # YOLO pole segmentation extraction
+      hip_analysis.py              # Hip droop computation
+    core/
+      gait_analysis.py             # Foot strikes, cadence, stride, velocity, calibration
+      pole_length.py               # Pole calibration, skeletonization, bend analysis
+      analysis.py                  # Hip height time-series, body height computation
+      calibration.py               # Height-based scale factor (m/px)
+
+  frontend/                        # Next.js app (deployed to Vercel)
+    app/
+      analyze/page.tsx             # Two-pass analysis flow (state machine)
+      dashboard/page.tsx           # User dashboard
+      auth/                        # Login, signup, callback routes
+      api/interpret/route.ts       # LLM coaching proxy (server-side)
+    components/
+      analyze/
+        VideoUploader.tsx           # Upload + config (imperial/metric, height, pole)
+        InitialFrameSelector.tsx    # Pre-pass-1: select start/plant/end frames
+        FrameSelector.tsx           # Pre-pass-2: select 5 pole frames from annotated video
+      results/
+        ResultsPanel.tsx            # Orchestrates all result sections
+        MetricsGrid.tsx             # Benchmark-badged metric cards
+        VelocityChart.tsx           # Approach velocity line chart (Recharts)
+        StrideChart.tsx             # Stride length bar chart (Recharts)
+        BendChart.tsx               # Pole bend progression chart
+        DebugImages.tsx             # Calibration debug image grid
+        LLMPanel.tsx                # Streaming AI coaching insights
+    lib/
+      api-client.ts                # Typed fetch wrapper for all API calls
+      types.ts                     # TypeScript types mirroring backend schemas
+      benchmarks.ts                # Biomechanics benchmark thresholds
+      supabase/                    # Auth client (browser + server)
+
+  Dockerfile                       # Multi-stage build: python:3.11-slim + CPU PyTorch
+  railway.toml                     # Railway config (healthcheck, volume mount)
+  docker-compose.dev.yml           # Local development (API on localhost:8000)
+  requirements-api.txt             # Python deps for the API container
+
+  _archive/                        # Archived Streamlit app (reference only)
+  step_detection/                  # ML training data for foot strike detection
 ```
 
 ---
 
-## ▶ Getting Started
+## Metrics Produced
+
+| Metric | Description | Source |
+|---|---|---|
+| **Peak velocity** | Maximum approach speed (m/s) | Hip midpoint displacement between frames |
+| **Avg velocity** | Mean approach speed | Same, averaged over approach window |
+| **Takeoff velocity** | Speed at the plant frame | Last velocity measurement before plant |
+| **Velocity retention** | Takeoff / Peak ratio | Computed in frontend |
+| **Cadence** | Steps per minute during approach | Foot strike count / approach duration |
+| **Stride length** | Per-step distance (cm/in) | Ankle displacement, calibrated via athlete height |
+| **Pole bend** | Chord-to-length ratio at max bend (%) | Pole mask skeletonization + arc-length |
+| **Peak hip height** | Highest point of hips during vault (m) | Pose landmark tracking, height-calibrated |
+| **Predicted clearance** | Estimated bar height the athlete could clear | Derived from hip peak + body geometry |
+
+---
+
+## API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/jobs` | Upload video + config, optionally auto-start |
+| `POST` | `/api/jobs/:id/start` | Set start/plant/end frames and begin processing |
+| `GET` | `/api/jobs/:id` | Poll job status and metrics |
+| `GET` | `/api/jobs/:id/stream` | SSE stream of progress updates |
+| `GET` | `/api/jobs/:id/frame` | Extract single frame as JPEG (source=input\|output) |
+| `POST` | `/api/jobs/:id/pass2` | Submit 5 pole frame selections for final analysis |
+| `GET` | `/api/jobs/:id/results/:file` | Download output video, CSVs, or debug images |
+| `DELETE` | `/api/jobs/:id` | Delete job and all files |
+| `GET` | `/health` | Health check |
+
+---
+
+## Local Development
 
 ### Prerequisites
-- **Python 3.10+**
-- **FFmpeg** (optional, for H.264 re-encoding of output videos)
-- A CUDA-capable GPU is recommended but not required
+- Docker Desktop (for the API)
+- Node.js 18+ (for the frontend)
 
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/alphapeakio/polevault.git
-cd polevault
-
-# Create and activate a virtual environment
-python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # macOS/Linux
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
-### Running the App
+### Setup
 
 ```bash
-streamlit run polevaultapp_modular.py
+# Start the API locally (from repo root):
+docker compose -f docker-compose.dev.yml build
+docker compose -f docker-compose.dev.yml up
+
+# In another terminal, start the frontend:
+cd frontend
+cp .env.local.example .env.local   # fill in your Supabase keys
+npm install
+npm run dev
 ```
 
-The app will open in your browser at `http://localhost:8501`.
+The frontend runs at `http://localhost:3000` and calls the API at `http://localhost:8000`. Set `NEXT_PUBLIC_API_URL=http://localhost:8000` in `.env.local`.
+
+### Without Docker
+
+If you don't have Docker, you can point the frontend at the production API:
+
+```bash
+cd frontend
+# In .env.local, set:
+# NEXT_PUBLIC_API_URL=https://api.vaultsense.app
+npm run dev
+```
+
+This lets you develop the frontend without running the ML pipeline locally.
 
 ---
 
-## ▶ Usage
+## Database Schema
 
-1. **Upload** a pole vault video (MP4, MOV, or AVI)
-2. **Select analysis types** from the sidebar:
-   - Skeleton Overlay
-   - Hip Analysis
-   - Step Analysis
-   - Pole Analysis
-3. **Configure settings:**
-   - Athlete height (for stride calibration)
-   - Pole length (optional, for real-world unit conversion)
-   - Step detection sensitivity (Advanced Settings)
-4. **Set frame markers** — start, plant, and end frames to define the analysis window
-5. **Run Analysis** — the unified pipeline processes the video and generates results
-6. **Review outputs** — annotated video, plots, metrics, and downloadable data
+Supabase Postgres with Row-Level Security:
+
+- **profiles** — user accounts with `role` (coach/athlete) and optional `coach_id` link
+- **sessions** — saved analysis results (metrics JSON, config, timestamps)
+
+Coaches can view their linked athletes' sessions. Athletes can only see their own data. Enforced at the database level via RLS policies.
 
 ---
 
-## ▶ Tech Stack
+## Environment Variables
 
-| Component | Technology |
+### Frontend (Vercel / `.env.local`)
+| Variable | Description |
 |---|---|
-| **UI / App Framework** | [Streamlit](https://streamlit.io/) |
-| **Pose Estimation** | [MediaPipe Pose](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker) (33 landmarks) |
-| **Object Detection** | [YOLO (Ultralytics)](https://docs.ultralytics.com/) — person detection + pole segmentation |
-| **Computer Vision** | [OpenCV](https://opencv.org/) |
-| **Data Processing** | NumPy, Pandas, Matplotlib |
+| `NEXT_PUBLIC_API_URL` | Backend API URL (`https://api.vaultsense.app`) |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase publishable key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (server-side only) |
+| `ANTHROPIC_API_KEY` | Anthropic API key for AI coaching |
+
+### Backend (Railway)
+| Variable | Description |
+|---|---|
+| `PORT` | Injected by Railway (typically 8080) |
+| `DATA_DIR` | Job storage directory (`/data`) |
+| `ALLOWED_ORIGINS` | CORS origins (comma-separated) |
 
 ---
 
-## ▶ Configuration
+## License
 
-### Sidebar Controls
-
-| Setting | Description | Default |
-|---|---|---|
-| Skeleton Overlay | Draw pose skeleton on output video | ✅ On |
-| Approach Hip Analysis | Compute hip droop metrics during approach | Off |
-| Step Analysis | Detect foot strikes, compute cadence & stride | ✅ On |
-| Max Hip Height | Measure peak hip height during bar clearance | ✅ On |
-| Pole Analysis | Detect/track pole, compute bend | ✅ On |
-| Athlete Height | Used for height-based stride calibration (eye-to-ankle + skull correction) | 5′7″ |
-| Pole Length | Optional additional calibration via pole pixel measurement | Off |
-| Min Lift Sensitivity | Vertical threshold for step detection | 0.015 |
-| Min Step Distance | Minimum frames between detected steps | 10 |
-
----
-
-## ▶ License
-
-This project is proprietary to **AlphaPeak**.
+Proprietary. All rights reserved.
