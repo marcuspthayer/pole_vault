@@ -19,7 +19,7 @@ export function useJobPoll(jobId: string | null, active: boolean) {
       try {
         const data = await apiClient.getJob(jobId);
         setJob(data);
-        if (data.status === 'complete' || data.status === 'failed' || data.status === 'pass1_done') {
+        if (data.status === 'complete' || data.status === 'failed') {
           if (intervalRef.current) clearInterval(intervalRef.current);
         }
       } catch (e) {
