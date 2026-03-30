@@ -214,10 +214,11 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
                     metrics["predicted_clear_m"] = round(pc, 3)
                     metrics["predicted_clear_in"] = round(pc * 39.3701, 1)
 
-        if bend_data:
-            chord_ratios = [b.get("chord_ratio") for b in bend_data if b.get("chord_ratio") is not None]
-            if chord_ratios:
-                metrics["max_pole_bend_pct"] = round(max(chord_ratios) * 100, 1)
+        if bend_data and isinstance(bend_data, dict):
+            # bend_data is a dict with 'max_bend' (smoothed %), 'poly_max_bend', 'bend_series', etc.
+            max_bend_val = bend_data.get("poly_max_bend") or bend_data.get("max_bend")
+            if max_bend_val is not None:
+                metrics["max_pole_bend_pct"] = round(max_bend_val, 1)
 
         if velocity_data and len(velocity_data) > 0:
             vels = [v.get("velocity_m_s", 0) for v in velocity_data if v.get("velocity_m_s")]
