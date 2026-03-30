@@ -568,9 +568,8 @@ def compute_approach_velocity(pose_landmarks_list, start_frame, plant_frame,
     if not pose_landmarks_list or fps <= 0:
         return []
 
-    # Extend analysis 0.25 seconds past plant
-    buffer_frames = int(0.25 * fps)
-    end_frame = min(plant_frame + buffer_frames, len(pose_landmarks_list) - 1)
+    # Stop at plant frame — post-plant horizontal velocity is meaningless
+    end_frame = min(plant_frame, len(pose_landmarks_list) - 1)
 
     # Extract hip midpoint X in pixels for each frame
     hip_x = []

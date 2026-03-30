@@ -91,6 +91,7 @@ export function FrameSelector({
             <div className="relative bg-black rounded-lg overflow-hidden aspect-video">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
+                key={val}
                 src={apiClient.getFrameUrl(jobId, val, 'output')}
                 alt={`${label}: frame ${val}`}
                 className="w-full h-full object-contain"

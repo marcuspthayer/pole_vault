@@ -40,6 +40,7 @@ def run_unified_pipeline(
     manual_pole_frames=None, # Pass 2: dict with phase1, phase2, plant, max_bend frame indices
     precomputed_pose=None, # Pre-extracted pose results (avoids re-running detection)
     precomputed_pole=None, # Pre-extracted pole results (avoids re-running detection)
+    debug_dir=None, # Directory for debug images (if None, uses ./debug_output)
 ):
     """
     Unified pipeline that:
@@ -152,7 +153,8 @@ def run_unified_pipeline(
     bend_series = []
     bend_data = None
     max_hip_height_data = None
-    debug_dir = os.path.join(os.getcwd(), "debug_output")
+    if debug_dir is None:
+        debug_dir = os.path.join(os.getcwd(), "debug_output")
     
     if enable_pose and pose_results:
         # Process raw pose data into hip metrics and body height time series
@@ -755,8 +757,10 @@ def run_unified_pipeline(
         # Use stdout=subprocess.PIPE, stderr=subprocess.PIPE to capture errors but not print them unless it fails
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if result.returncode == 0 and os.path.exists(h264_path):
-            output_path = h264_path
-            logger.debug(f"Re-encoded to H.264: {h264_path}")
+            # Replace original with H.264 version so job_runner finds output.mp4
+            os.remove(output_path)
+            os.rename(h264_path, output_path)
+            logger.debug(f"Re-encoded to H.264: {output_path}")
         else:
             logger.warning(f"ffmpeg re-encode failed with code {result.returncode}, video may not play in browser. Error: {result.stderr.decode('utf-8')[:200]}")
     except Exception as e:

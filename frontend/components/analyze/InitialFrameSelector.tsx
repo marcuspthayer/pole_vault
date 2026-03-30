@@ -76,6 +76,7 @@ export function InitialFrameSelector({ jobId, totalFrames, fps, onSubmit, loadin
             <div className="relative bg-black rounded-lg overflow-hidden aspect-video">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
+                key={val}
                 src={apiClient.getFrameUrl(jobId, val)}
                 alt={`${label}: frame ${val}`}
                 className="w-full h-full object-contain"

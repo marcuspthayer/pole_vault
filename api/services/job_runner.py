@@ -129,8 +129,7 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
                 "phase1": p2["phase1_frame"],
                 "phase2": p2["phase2_frame"],
                 "plant": p2["plant_frame"],
-                "bend_start": p2["bend_start_frame"],
-                "bend_end": p2["bend_end_frame"],
+                "max_bend": (p2["bend_start_frame"], p2["bend_end_frame"]),
             }
 
         skip_pole_metrics = config.get("enable_manual_pole_frames", False) and precomputed_pose is None
@@ -158,6 +157,7 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
             manual_pole_frames=manual_pole_frames,
             precomputed_pose=precomputed_pose,
             precomputed_pole=precomputed_pole,
+            debug_dir=debug_dir,
         )
 
         # result is a 10-tuple:
@@ -200,10 +200,12 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
 
         # --- Extract summary metrics ---
         metrics = {}
-        if stride_data:
-            cadences = [s.get("cadence_spm") for s in stride_data if s.get("cadence_spm")]
-            if cadences:
-                metrics["cadence_spm"] = round(sum(cadences) / len(cadences), 1)
+        if stride_data and len(stride_data) >= 2:
+            # Compute cadence from stride frame data and video fps
+            frames = [s["frame"] for s in stride_data]
+            duration_min = (max(frames) - min(frames)) / fps / 60.0
+            if duration_min > 0:
+                metrics["cadence_spm"] = round(len(stride_data) / duration_min, 1)
 
         if max_hip_height_data:
             mhh = max_hip_height_data.get("height_m")
