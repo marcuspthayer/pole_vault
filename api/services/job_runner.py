@@ -20,7 +20,7 @@ logger = logging.getLogger("vaultsense.job_runner")
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 JOBS_DIR = DATA_DIR / "jobs"
-JOB_TTL_SECONDS = 7200  # 2 hours
+JOB_TTL_SECONDS = 600  # 10 minutes — results are ephemeral, users download what they need
 
 # Single global executor — 1 worker to stay within RAM budget
 _executor = ProcessPoolExecutor(max_workers=1)
@@ -307,7 +307,7 @@ async def submit_job(job_id: str) -> None:
 async def cleanup_old_jobs() -> None:
     """Periodic task: delete jobs older than JOB_TTL_SECONDS."""
     while True:
-        await asyncio.sleep(600)  # check every 10 minutes
+        await asyncio.sleep(120)  # check every 2 minutes
         now = time.time()
         try:
             for jdir in JOBS_DIR.iterdir():
