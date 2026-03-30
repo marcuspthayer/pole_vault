@@ -233,6 +233,14 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
         _write_job(job)
         _write_progress(1.0, "Analysis complete")
 
+        # Clean up large files to free disk space
+        input_p = _Path(input_path)
+        if input_p.exists():
+            input_p.unlink()
+        pkl_p = _Path(str(jdir / "precomputed.pkl"))
+        if pkl_p.exists():
+            pkl_p.unlink()
+
         return {"status": "complete", "metrics": metrics, "result_files": result_files}
 
     except Exception as e:
