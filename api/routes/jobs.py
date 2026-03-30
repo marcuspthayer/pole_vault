@@ -208,6 +208,19 @@ async def delete_job(job_id: str):
     return None
 
 
+@router.delete("", status_code=200)
+async def cleanup_all_jobs():
+    """Delete ALL jobs and free disk space."""
+    import shutil
+    jdir = jobs_dir()
+    count = 0
+    for d in jdir.iterdir():
+        if d.is_dir():
+            shutil.rmtree(d, ignore_errors=True)
+            count += 1
+    return {"deleted": count}
+
+
 @router.get("/health", tags=["health"])
 async def health():
     return {"status": "ok"}
