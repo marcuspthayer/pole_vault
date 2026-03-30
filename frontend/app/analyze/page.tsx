@@ -24,6 +24,7 @@ type Stage =
 interface State {
   stage: Stage;
   jobId: string | null;
+  jobData: JobResponse | null;
   error: string | null;
   startFrame: number;
   plantFrame: number;
@@ -32,7 +33,7 @@ interface State {
 
 type Action =
   | { type: 'UPLOAD_START' }
-  | { type: 'JOB_CREATED'; jobId: string }
+  | { type: 'JOB_CREATED'; job: JobResponse }
   | { type: 'FRAMES_SELECTED'; start: number; plant: number; end: number }
   | { type: 'PASS1_DONE' }
   | { type: 'PASS2_START' }
@@ -43,6 +44,7 @@ type Action =
 const INITIAL_STATE: State = {
   stage: 'idle',
   jobId: null,
+  jobData: null,
   error: null,
   startFrame: 0,
   plantFrame: 0,
@@ -54,7 +56,7 @@ function reducer(state: State, action: Action): State {
     case 'UPLOAD_START':
       return { ...state, stage: 'uploading', error: null };
     case 'JOB_CREATED':
-      return { ...state, stage: 'select_frames', jobId: action.jobId };
+      return { ...state, stage: 'select_frames', jobId: action.job.job_id, jobData: action.job };
     case 'FRAMES_SELECTED':
       return { ...state, stage: 'pass1', startFrame: action.start, plantFrame: action.plant, endFrame: action.end };
     case 'PASS1_DONE':
@@ -74,25 +76,28 @@ function reducer(state: State, action: Action): State {
 
 export default function AnalyzePage() {
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
-  const { stage, jobId, error, startFrame, plantFrame, endFrame } = state;
+  const { stage, jobId, jobData, error, startFrame, plantFrame, endFrame } = state;
 
   const pollingActive = stage === 'pass1' || stage === 'pass2';
-  const job = useJobPoll(jobId, pollingActive);
+  const polledJob = useJobPoll(jobId, pollingActive);
+
+  // Use polled data when available, fall back to stored jobData
+  const currentJob = polledJob ?? jobData;
 
   // React to job status changes
   const [lastStatus, setLastStatus] = useState<string | null>(null);
-  if (job && job.status !== lastStatus) {
-    setLastStatus(job.status);
-    if (job.status === 'pass1_done' && stage === 'pass1') dispatch({ type: 'PASS1_DONE' });
-    if (job.status === 'complete' && (stage === 'pass2' || stage === 'pass1')) dispatch({ type: 'COMPLETE' });
-    if (job.status === 'failed') dispatch({ type: 'FAIL', error: job.error ?? 'Analysis failed' });
+  if (polledJob && polledJob.status !== lastStatus) {
+    setLastStatus(polledJob.status);
+    if (polledJob.status === 'pass1_done' && stage === 'pass1') dispatch({ type: 'PASS1_DONE' });
+    if (polledJob.status === 'complete' && (stage === 'pass2' || stage === 'pass1')) dispatch({ type: 'COMPLETE' });
+    if (polledJob.status === 'failed') dispatch({ type: 'FAIL', error: polledJob.error ?? 'Analysis failed' });
   }
 
   async function handleUpload(file: File, config: JobConfig) {
     dispatch({ type: 'UPLOAD_START' });
     try {
       const res = await apiClient.createJob(file, config, false);
-      dispatch({ type: 'JOB_CREATED', jobId: res.job_id });
+      dispatch({ type: 'JOB_CREATED', job: res });
     } catch (e) {
       dispatch({ type: 'FAIL', error: String(e) });
     }
@@ -120,8 +125,6 @@ export default function AnalyzePage() {
       dispatch({ type: 'FAIL', error: String(e) });
     }
   }
-
-  const currentJob: JobResponse | null = job;
 
   return (
     <main className="min-h-screen bg-gray-950 text-white">
