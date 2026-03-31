@@ -214,54 +214,58 @@ def run_unified_pipeline(
 
             if enable_ml_steps:
                 # --- ML-BASED STEP DETECTION ---
-                logger.info("Using ML step detection model")
-                from step_detection.inference import load_model as load_step_model, predict_steps, clean_predictions
+                try:
+                    logger.info("Using ML step detection model")
+                    from step_detection.inference import load_model as load_step_model, predict_steps, clean_predictions
 
-                ml_pipeline, ml_meta = load_step_model()
-                feature_cols = ml_meta["feature_columns"]
+                    ml_pipeline, ml_meta = load_step_model()
+                    feature_cols = ml_meta["feature_columns"]
 
-                ml_predictions = predict_steps(
-                    pose_results, feature_cols, ml_pipeline,
-                    start_frame=step_window_start,
-                    end_frame=step_window_end - 1,
-                )
-                ml_steps = clean_predictions(ml_predictions, fps=fps)
+                    ml_predictions = predict_steps(
+                        pose_results, feature_cols, ml_pipeline,
+                        start_frame=step_window_start,
+                        end_frame=step_window_end - 1,
+                    )
+                    ml_steps = clean_predictions(ml_predictions, fps=fps)
 
-                # Convert ML steps -> foot_strikes format for downstream compatibility
-                foot_strikes = []
-                for step in ml_steps:
-                    mid_frame = (step['start_frame'] + step['end_frame']) // 2
-                    pr = pose_results[mid_frame] if mid_frame < len(pose_results) else None
-                    if pr and pr.pose_landmarks:
-                        ankle_idx = (mp_pose.PoseLandmark.LEFT_ANKLE.value
-                                     if step['side'] == 'left'
-                                     else mp_pose.PoseLandmark.RIGHT_ANKLE.value)
-                        lm = pr.pose_landmarks.landmark[ankle_idx]
-                        pt = (lm.x, lm.y)
-                    else:
-                        pt = (0.5, 0.9)
-                    foot_strikes.append({
-                        'frame': mid_frame,
-                        'side': step['side'],
-                        'pt': pt,
-                        'confidence': 1.0,
-                    })
+                    # Convert ML steps -> foot_strikes format for downstream compatibility
+                    foot_strikes = []
+                    for step in ml_steps:
+                        mid_frame = (step['start_frame'] + step['end_frame']) // 2
+                        pr = pose_results[mid_frame] if mid_frame < len(pose_results) else None
+                        if pr and pr.pose_landmarks:
+                            ankle_idx = (mp_pose.PoseLandmark.LEFT_ANKLE.value
+                                         if step['side'] == 'left'
+                                         else mp_pose.PoseLandmark.RIGHT_ANKLE.value)
+                            lm = pr.pose_landmarks.landmark[ankle_idx]
+                            pt = (lm.x, lm.y)
+                        else:
+                            pt = (0.5, 0.9)
+                        foot_strikes.append({
+                            'frame': mid_frame,
+                            'side': step['side'],
+                            'pt': pt,
+                            'confidence': 1.0,
+                        })
 
-                # Build ankle Y arrays for visualization
-                l_ankles_y = []
-                r_ankles_y = []
-                for i in range(step_window_start, step_window_end):
-                    pr = pose_results[i] if i < len(pose_results) else None
-                    if pr and pr.pose_landmarks:
-                        l_ankles_y.append(pr.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_ANKLE.value].y)
-                        r_ankles_y.append(pr.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_ANKLE.value].y)
-                    else:
-                        l_ankles_y.append(None)
-                        r_ankles_y.append(None)
+                    # Build ankle Y arrays for visualization
+                    l_ankles_y = []
+                    r_ankles_y = []
+                    for i in range(step_window_start, step_window_end):
+                        pr = pose_results[i] if i < len(pose_results) else None
+                        if pr and pr.pose_landmarks:
+                            l_ankles_y.append(pr.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_ANKLE.value].y)
+                            r_ankles_y.append(pr.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_ANKLE.value].y)
+                        else:
+                            l_ankles_y.append(None)
+                            r_ankles_y.append(None)
 
-                logger.info(f"ML step detection found {len(foot_strikes)} steps")
+                    logger.info(f"ML step detection found {len(foot_strikes)} steps")
+                except Exception as e:
+                    logger.warning("ML step detection failed, falling back to heuristic: %s", e)
+                    enable_ml_steps = False
 
-            else:
+            if not enable_ml_steps:
                 # --- HEURISTIC STEP DETECTION ---
                 stride_len_val = estimate_stride_length(athlete_height_m)
 

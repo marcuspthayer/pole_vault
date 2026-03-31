@@ -4,6 +4,8 @@ pandas
 mediapipe==0.10.9
 ultralytics
 imageio-ffmpeg
+scikit-learn>=1.0
+joblib>=1.2
 fastapi
 uvicorn[standard]
 python-multipart
