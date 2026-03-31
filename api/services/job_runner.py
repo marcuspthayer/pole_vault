@@ -61,8 +61,11 @@ def read_progress(job_id: str) -> dict:
     p = jobs_dir() / job_id / "progress.json"
     if not p.exists():
         return {"progress": 0.0, "message": ""}
-    with open(p) as f:
-        return json.load(f)
+    try:
+        with open(p) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, ValueError):
+        return {"progress": 0.0, "message": ""}
 
 
 def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
@@ -320,16 +323,27 @@ async def cleanup_old_jobs() -> None:
                 with open(job_file) as f:
                     job = json.load(f)
                 status = job.get("status", "")
+                created = job.get("created_at", now)
+                # Mark stuck running jobs as failed after TTL
+                if status in ("running", "queued") and now - created > JOB_TTL_SECONDS:
+                    job["status"] = "failed"
+                    job["error"] = "Processing timed out — video may be too large or high-FPS for this server"
+                    with open(job_file, "w") as wf:
+                        json.dump(job, wf)
+                    status = "failed"
                 # Only clean up completed or failed jobs — never in-progress ones
                 if status not in ("complete", "failed"):
                     continue
                 created = job.get("created_at", now)
                 if now - created > JOB_TTL_SECONDS:
                     # Delete only large files, keep metrics/CSVs/debug images
+                    deleted_any = False
                     for large_file in ["output.mp4", "input.mp4", "precomputed.pkl"]:
                         p = jdir / large_file
                         if p.exists():
                             p.unlink()
-                    logger.info(f"Cleaned up large files from expired job {jdir.name}")
+                            deleted_any = True
+                    if deleted_any:
+                        logger.info(f"Cleaned up large files from expired job {jdir.name}")
         except Exception as e:
             logger.warning(f"Cleanup error: {e}")
