@@ -200,10 +200,11 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
 
         # --- Extract summary metrics ---
         metrics = {}
+        job_fps = job.get("fps", 30.0)
         if stride_data and len(stride_data) >= 2:
             # Compute cadence from stride frame data and video fps
             frames = [s["frame"] for s in stride_data]
-            duration_min = (max(frames) - min(frames)) / fps / 60.0
+            duration_min = (max(frames) - min(frames)) / job_fps / 60.0
             if duration_min > 0:
                 metrics["cadence_spm"] = round(len(stride_data) / duration_min, 1)
 
