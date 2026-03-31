@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 import pickle
+import subprocess
 import time
 import uuid
 import logging
@@ -22,8 +23,56 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 JOBS_DIR = DATA_DIR / "jobs"
 JOB_TTL_SECONDS = 1800  # 30 minutes — enough time for both passes + viewing results
 
+MAX_FPS = 60  # Downsample anything above this at upload time
+
 # Single global executor — 1 worker to stay within RAM budget
 _executor = ProcessPoolExecutor(max_workers=1)
+
+
+def _downsample_if_needed(input_path: Path) -> Optional[float]:
+    """If video fps > MAX_FPS, re-encode to MAX_FPS using ffmpeg.
+
+    Returns the original fps if downsampling occurred, else None.
+    The input file is replaced in-place on success.
+    """
+    try:
+        import cv2
+        cap = cv2.VideoCapture(str(input_path))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0
+        cap.release()
+
+        if fps <= MAX_FPS:
+            return None
+
+        import imageio_ffmpeg
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        temp_path = input_path.with_name("input_60fps.mp4")
+
+        cmd = [
+            ffmpeg_exe, "-y",
+            "-i", str(input_path),
+            "-vf", f"fps={MAX_FPS}",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            str(temp_path),
+        ]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        if result.returncode == 0 and temp_path.exists():
+            os.remove(input_path)
+            os.rename(temp_path, input_path)
+            logger.info("Downsampled %.1ffps → %dfps: %s", fps, MAX_FPS, input_path.name)
+            return fps
+        else:
+            logger.warning("ffmpeg downsample failed (rc=%d): %s",
+                           result.returncode, result.stderr[:200])
+            if temp_path.exists():
+                os.remove(temp_path)
+            return None
+    except Exception as e:
+        logger.warning("Downsample skipped: %s", e)
+        return None
 
 
 def jobs_dir() -> Path:
@@ -269,7 +318,10 @@ async def create_job(video_bytes: bytes, filename: str, config: dict, status: st
     with open(input_path, "wb") as f:
         f.write(video_bytes)
 
-    # Read video metadata
+    # Downsample high-fps videos (e.g. 120/240fps slow-mo) to 60fps
+    original_fps = _downsample_if_needed(input_path)
+
+    # Read video metadata (reflects downsampled file if applicable)
     import cv2
     cap = cv2.VideoCapture(str(input_path))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -288,6 +340,7 @@ async def create_job(video_bytes: bytes, filename: str, config: dict, status: st
         "fps": fps,
         "width": width,
         "height": height,
+        "original_fps": original_fps,
         "created_at": time.time(),
         "metrics": None,
         "result_files": None,
