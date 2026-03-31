@@ -155,7 +155,7 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
             step_min_lift=config.get("step_min_lift", 0.015),
             step_min_dist=config.get("step_min_dist"),
             pole_length_m=config.get("pole_length_m"),
-            enable_ml_steps=config.get("enable_ml_steps", False),
+            enable_ml_steps=config.get("enable_ml_steps", True),
             skip_pole_metrics=skip_pole_metrics,
             manual_pole_frames=manual_pole_frames,
             precomputed_pose=precomputed_pose,
