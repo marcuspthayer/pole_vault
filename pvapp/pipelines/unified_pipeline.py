@@ -233,8 +233,22 @@ def run_unified_pipeline(
                             sum(1 for p in ml_predictions if p['left_contact']),
                             sum(1 for p in ml_predictions if p['right_contact']))
 
+                # Log the raw contact pattern for debugging
+                pattern = ""
+                for p in ml_predictions:
+                    if p['left_contact'] and p['right_contact']:
+                        pattern += "B"
+                    elif p['left_contact']:
+                        pattern += "L"
+                    elif p['right_contact']:
+                        pattern += "R"
+                    else:
+                        pattern += "."
+                logger.info("ML raw contact pattern: %s", pattern)
+
                 ml_steps = clean_predictions(ml_predictions, fps=fps)
-                logger.info("ML clean steps: %d steps after cleaning", len(ml_steps))
+                logger.info("ML clean steps: %d steps after cleaning (min_step_frames=%d at %.0ffps)",
+                            len(ml_steps), max(2, round(fps * 0.03)), fps)
 
                 # Convert ML steps -> foot_strikes format for downstream compatibility
                 foot_strikes = []
