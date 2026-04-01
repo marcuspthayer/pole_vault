@@ -258,13 +258,13 @@ def run_unified_pipeline(
                     mid_frame = (step['start_frame'] + step['end_frame']) // 2
                     pr = pose_results[mid_frame] if mid_frame < len(pose_results) else None
                     if pr and pr.pose_landmarks:
-                        l_ankle = pr.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_ANKLE.value]
-                        r_ankle = pr.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_ANKLE.value]
-                        # Pick the ankle closer to the ground (higher y in normalized coords)
-                        if l_ankle.y >= r_ankle.y:
-                            pt = (l_ankle.x, l_ankle.y)
+                        l_toe = pr.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_FOOT_INDEX.value]
+                        r_toe = pr.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_FOOT_INDEX.value]
+                        # Pick the toe closer to the ground (higher y in normalized coords)
+                        if l_toe.y >= r_toe.y:
+                            pt = (l_toe.x, l_toe.y)
                         else:
-                            pt = (r_ankle.x, r_ankle.y)
+                            pt = (r_toe.x, r_toe.y)
                     else:
                         pt = (0.5, 0.9)
                     foot_strikes.append({
