@@ -251,16 +251,20 @@ def run_unified_pipeline(
                             len(ml_steps), max(2, round(fps * 0.03)), fps)
 
                 # Convert ML steps -> foot_strikes format for downstream compatibility
+                # Use the ankle with higher y (closer to ground) to guard against
+                # MediaPipe randomly swapping left/right labels at some frames.
                 foot_strikes = []
                 for step in ml_steps:
                     mid_frame = (step['start_frame'] + step['end_frame']) // 2
                     pr = pose_results[mid_frame] if mid_frame < len(pose_results) else None
                     if pr and pr.pose_landmarks:
-                        ankle_idx = (mp_pose.PoseLandmark.LEFT_ANKLE.value
-                                     if step['side'] == 'left'
-                                     else mp_pose.PoseLandmark.RIGHT_ANKLE.value)
-                        lm = pr.pose_landmarks.landmark[ankle_idx]
-                        pt = (lm.x, lm.y)
+                        l_ankle = pr.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_ANKLE.value]
+                        r_ankle = pr.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_ANKLE.value]
+                        # Pick the ankle closer to the ground (higher y in normalized coords)
+                        if l_ankle.y >= r_ankle.y:
+                            pt = (l_ankle.x, l_ankle.y)
+                        else:
+                            pt = (r_ankle.x, r_ankle.y)
                     else:
                         pt = (0.5, 0.9)
                     foot_strikes.append({
