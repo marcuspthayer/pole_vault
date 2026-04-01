@@ -50,6 +50,7 @@ class JobMetrics(BaseModel):
     takeoff_velocity_ms: Optional[float] = None
     predicted_clear_m: Optional[float] = None
     predicted_clear_in: Optional[float] = None
+    plant_to_peak_s: Optional[float] = None
 
 
 class JobResultFiles(BaseModel):

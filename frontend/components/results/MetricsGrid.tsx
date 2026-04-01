@@ -30,6 +30,10 @@ export function MetricsGrid({ metrics, gender = 'men' }: Props) {
     ? benchmarks.predictedClearance(metrics.predicted_clear_m, gender)
     : null;
 
+  const plantToPeakClass = metrics.plant_to_peak_s != null
+    ? benchmarks.plantToPeak(metrics.plant_to_peak_s)
+    : null;
+
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
       <MetricCard
@@ -70,6 +74,13 @@ export function MetricsGrid({ metrics, gender = 'men' }: Props) {
         label="Peak hip height"
         value={metrics.max_hip_height_m?.toFixed(2)}
         unit="m"
+      />
+      <MetricCard
+        label="Plant to peak"
+        value={metrics.plant_to_peak_s?.toFixed(2)}
+        unit="s"
+        badge={plantToPeakClass?.label}
+        badgeColor={plantToPeakClass?.color}
       />
       <MetricCard
         label="Predicted clearance"

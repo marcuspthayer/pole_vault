@@ -39,6 +39,7 @@ export interface JobMetrics {
   takeoff_velocity_ms?: number;
   predicted_clear_m?: number;
   predicted_clear_in?: number;
+  plant_to_peak_s?: number;
 }
 
 // Data rows from CSV downloads

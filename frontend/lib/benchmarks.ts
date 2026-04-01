@@ -73,6 +73,14 @@ const CLEARANCE_RANGES_WOMEN: BenchmarkRange[] = [
   { level: 'elite',       label: 'Elite',       color: 'text-green-400',  min: 4.4,  max: 99   },
 ];
 
+// Plant-to-peak-hip time (seconds) — longer swing = better
+const PLANT_TO_PEAK_RANGES: BenchmarkRange[] = [
+  { level: 'beginner',    label: 'Short',       color: 'text-gray-400',   min: 0,    max: 1.10 },
+  { level: 'developing',  label: 'Developing',  color: 'text-yellow-400', min: 1.10, max: 1.25 },
+  { level: 'competitive', label: 'Competitive', color: 'text-blue-400',   min: 1.25, max: 1.35 },
+  { level: 'elite',       label: 'Elite',       color: 'text-green-400',  min: 1.35, max: 99   },
+];
+
 export const benchmarks = {
   peakVelocity(value: number, gender: 'men' | 'women' = 'men') {
     return classify(value, gender === 'men' ? VELOCITY_RANGES_MEN : VELOCITY_RANGES_WOMEN);
@@ -90,5 +98,8 @@ export const benchmarks = {
   },
   predictedClearance(value: number, gender: 'men' | 'women' = 'men') {
     return classify(value, gender === 'men' ? CLEARANCE_RANGES_MEN : CLEARANCE_RANGES_WOMEN);
+  },
+  plantToPeak(value: number) {
+    return classify(value, PLANT_TO_PEAK_RANGES);
   },
 };

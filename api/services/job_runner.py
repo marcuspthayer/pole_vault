@@ -274,6 +274,11 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
                 if pc:
                     metrics["predicted_clear_m"] = round(pc, 3)
                     metrics["predicted_clear_in"] = round(pc * 39.3701, 1)
+            peak_frame = max_hip_height_data.get("peak_frame")
+            p_frame = config.get("plant_frame")
+            job_fps = job.get("fps", 30.0)
+            if peak_frame is not None and p_frame is not None and job_fps > 0:
+                metrics["plant_to_peak_s"] = round((peak_frame - p_frame) / job_fps, 2)
 
         if bend_data and isinstance(bend_data, dict):
             # bend_data is a dict with 'max_bend' (smoothed %), 'poly_max_bend', 'bend_series', etc.
