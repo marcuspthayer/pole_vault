@@ -244,12 +244,12 @@ with tab_label:
             start_f = st.slider("Start Frame", 0, total - 1, st.session_state.start_frame, key="slider_start")
             preview_start = read_frame(st.session_state.video_path, start_f)
             if preview_start is not None:
-                st.image(cv2.cvtColor(preview_start, cv2.COLOR_BGR2RGB), caption=f"Start: frame {start_f}", use_container_width=True)
+                st.image(cv2.cvtColor(preview_start, cv2.COLOR_BGR2RGB), caption=f"Start: frame {start_f}", width="stretch")
         with col_e:
             end_f = st.slider("End Frame", 0, total - 1, st.session_state.end_frame, key="slider_end")
             preview_end = read_frame(st.session_state.video_path, end_f)
             if preview_end is not None:
-                st.image(cv2.cvtColor(preview_end, cv2.COLOR_BGR2RGB), caption=f"End: frame {end_f}", use_container_width=True)
+                st.image(cv2.cvtColor(preview_end, cv2.COLOR_BGR2RGB), caption=f"End: frame {end_f}", width="stretch")
 
         st.session_state.start_frame = start_f
         st.session_state.end_frame = max(end_f, start_f + 1)
@@ -337,7 +337,7 @@ with tab_label:
                 time_sec = cur / st.session_state.fps if st.session_state.fps else 0
                 st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB),
                          caption=f"Frame {cur} · {time_sec:.3f}s",
-                         use_container_width=True)
+                         width="stretch")
 
         with info_col:
             time_sec = cur / st.session_state.fps if st.session_state.fps else 0
@@ -355,7 +355,7 @@ with tab_label:
 
         single_col, _, range_start_col, range_end_col = st.columns([2, 0.5, 2, 2])
         with single_col:
-            if st.button("🏷️  Mark Single Frame", type="primary", use_container_width=True):
+            if st.button("🏷️  Mark Single Frame", type="primary", width="stretch"):
                 if _add_label(cur, side):
                     st.session_state.labels.sort(key=lambda l: l["frame"])
                     st.rerun()
@@ -363,7 +363,7 @@ with tab_label:
                     st.warning("Frame already labeled.")
 
         with range_start_col:
-            if st.button("📍 Mark Range Start", use_container_width=True):
+            if st.button("📍 Mark Range Start", width="stretch"):
                 st.session_state.step_range_start = cur
                 st.rerun()
 
@@ -371,7 +371,7 @@ with tab_label:
             range_start = st.session_state.step_range_start
             btn_disabled = range_start is None
             label_text = "📍 Mark Range End & Fill" if not btn_disabled else "📍 Set Start First"
-            if st.button(label_text, disabled=btn_disabled, use_container_width=True):
+            if st.button(label_text, disabled=btn_disabled, width="stretch"):
                 if range_start is not None:
                     r_start = min(range_start, cur)
                     r_end = max(range_start, cur)
@@ -576,13 +576,13 @@ with tab_test:
                 preview = read_frame(st.session_state.test_video_path, t_start)
                 if preview is not None:
                     st.image(cv2.cvtColor(preview, cv2.COLOR_BGR2RGB),
-                             caption=f"Start: frame {t_start}", use_container_width=True)
+                             caption=f"Start: frame {t_start}", width="stretch")
             with t_col_e:
                 t_end = st.slider("End Frame", 0, t_total - 1, t_total - 1, key="test_end")
                 preview = read_frame(st.session_state.test_video_path, t_end)
                 if preview is not None:
                     st.image(cv2.cvtColor(preview, cv2.COLOR_BGR2RGB),
-                             caption=f"End: frame {t_end}", use_container_width=True)
+                             caption=f"End: frame {t_end}", width="stretch")
 
             t_end = max(t_end, t_start + 1)
             window_frames = t_end - t_start
@@ -646,7 +646,7 @@ with tab_test:
                             "End Frame": s["end_frame"],
                             "Duration (frames)": dur,
                         })
-                    st.dataframe(pd.DataFrame(step_rows), use_container_width=True,
+                    st.dataframe(pd.DataFrame(step_rows), width="stretch",
                                  hide_index=True)
 
                 # ---- Clean video ----

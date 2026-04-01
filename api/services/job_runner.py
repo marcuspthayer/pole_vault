@@ -215,10 +215,7 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
             end_frame=config.get("end_frame"),
             athlete_height_m=config.get("athlete_height_m", 1.70),
             progress_callback=_write_progress,
-            step_min_lift=config.get("step_min_lift", 0.015),
-            step_min_dist=config.get("step_min_dist"),
             pole_length_m=config.get("pole_length_m"),
-            enable_ml_steps=config.get("enable_ml_steps", True),
             skip_pole_metrics=skip_pole_metrics,
             manual_pole_frames=manual_pole_frames,
             precomputed_pose=precomputed_pose,
@@ -226,11 +223,11 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
             debug_dir=debug_dir,
         )
 
-        # result is a 10-tuple:
+        # result is an 11-tuple:
         # (output_path, stride_data_list, calib_px, ankles, bend_data,
-        #  height_scale, max_hip_height_data, pose_results, pole_results, velocity_data)
+        #  height_scale, max_hip_height_data, pose_results, pole_results, velocity_data, cadence_val)
         (out_vid, stride_data, calib_px, ankles, bend_data,
-         height_scale, max_hip_height_data, pose_results, pole_results, velocity_data) = result
+         height_scale, max_hip_height_data, pose_results, pole_results, velocity_data, cadence_val) = result
 
         # --- Pass 1 complete: save precomputed results for Pass 2 ---
         if skip_pole_metrics:
@@ -266,13 +263,8 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
 
         # --- Extract summary metrics ---
         metrics = {}
-        job_fps = job.get("fps", 30.0)
-        if stride_data and len(stride_data) >= 2:
-            # Compute cadence from stride frame data and video fps
-            frames = [s["frame"] for s in stride_data]
-            duration_min = (max(frames) - min(frames)) / job_fps / 60.0
-            if duration_min > 0:
-                metrics["cadence_spm"] = round(len(stride_data) / duration_min, 1)
+        if cadence_val is not None:
+            metrics["cadence_spm"] = round(cadence_val, 1)
 
         if max_hip_height_data:
             mhh = max_hip_height_data.get("height_m")

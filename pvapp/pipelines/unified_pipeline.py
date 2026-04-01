@@ -10,7 +10,7 @@ logger = logging.getLogger("pv.pipeline")
 from pvapp.pipelines.pose_pipeline import extract_pose_data
 from pvapp.pipelines.pole_pipeline import extract_pole_data
 from pvapp.core.analysis import process_pose_data, compute_hip_drop
-from pvapp.core.gait_analysis import estimate_stride_length, detect_foot_strikes, calculate_cadence, compute_height_scale_factor, compute_max_hip_height, compute_approach_velocity
+from pvapp.core.gait_analysis import calculate_cadence, compute_height_scale_factor, compute_max_hip_height, compute_approach_velocity
 from pvapp.utils.cv_utils import draw_outlined_text, draw_simple_skeleton
 from pvapp.core.pole_length import analyze_pole_segments, analyze_pole_segment_single_frame, draw_debug_calib, analyze_pole_bend, draw_debug_bend, draw_debug_plant
 
@@ -32,10 +32,7 @@ def run_unified_pipeline(
     end_frame=None,
     athlete_height_m=1.70, # Default to 1.70m
     progress_callback=None,
-    step_min_lift=0.015,
-    step_min_dist=None,
     pole_length_m=None, # New Optional Arg for Calibration
-    enable_ml_steps=False, # Use trained ML model for step detection
     skip_pole_metrics=False, # Pass 1: detect pole masks but skip length/bend calculations
     manual_pole_frames=None, # Pass 2: dict with phase1, phase2, plant, max_bend frame indices
     precomputed_pose=None, # Pre-extracted pose results (avoids re-running detection)
@@ -133,7 +130,7 @@ def run_unified_pipeline(
     analysis_end_idx = 0
     
     # Gait Analysis Config
-    stride_len_val = None # Legacy heuristic (still possibly used for fallback?)
+    # stride_len_val removed — heuristic step detection no longer used
     cadence_val = None
     foot_strikes = []
     stride_data_list = [] # New list for plotting
@@ -212,77 +209,78 @@ def run_unified_pipeline(
             step_window_end = min(len(pose_landmarks_list), plant_frame + buffer_frames) if plant_frame else len(pose_landmarks_list)
             step_window_start = start_frame if start_frame is not None else 0
 
-            if enable_ml_steps:
-                # --- ML-BASED STEP DETECTION ---
-                try:
-                    logger.info("Using ML step detection model")
-                    from step_detection.inference import load_model as load_step_model, predict_steps, clean_predictions
+            # --- ML-BASED STEP DETECTION (only method) ---
+            import traceback
+            try:
+                logger.info("ML step detection: fps=%.1f, frame_window=[%d, %d) (%d frames)",
+                            fps, step_window_start, step_window_end,
+                            step_window_end - step_window_start)
 
-                    ml_pipeline, ml_meta = load_step_model()
-                    feature_cols = ml_meta["feature_columns"]
+                from step_detection.inference import load_model as load_step_model, predict_steps, clean_predictions
 
-                    ml_predictions = predict_steps(
-                        pose_results, feature_cols, ml_pipeline,
-                        start_frame=step_window_start,
-                        end_frame=step_window_end - 1,
-                    )
-                    ml_steps = clean_predictions(ml_predictions, fps=fps)
+                ml_pipeline, ml_meta = load_step_model()
+                feature_cols = ml_meta["feature_columns"]
+                logger.info("ML step model loaded: %s (%d features)",
+                            ml_meta.get("model_name", "unknown"), len(feature_cols))
 
-                    # Convert ML steps -> foot_strikes format for downstream compatibility
-                    foot_strikes = []
-                    for step in ml_steps:
-                        mid_frame = (step['start_frame'] + step['end_frame']) // 2
-                        pr = pose_results[mid_frame] if mid_frame < len(pose_results) else None
-                        if pr and pr.pose_landmarks:
-                            ankle_idx = (mp_pose.PoseLandmark.LEFT_ANKLE.value
-                                         if step['side'] == 'left'
-                                         else mp_pose.PoseLandmark.RIGHT_ANKLE.value)
-                            lm = pr.pose_landmarks.landmark[ankle_idx]
-                            pt = (lm.x, lm.y)
-                        else:
-                            pt = (0.5, 0.9)
-                        foot_strikes.append({
-                            'frame': mid_frame,
-                            'side': step['side'],
-                            'pt': pt,
-                            'confidence': 1.0,
-                        })
-
-                    # Build ankle Y arrays for visualization
-                    l_ankles_y = []
-                    r_ankles_y = []
-                    for i in range(step_window_start, step_window_end):
-                        pr = pose_results[i] if i < len(pose_results) else None
-                        if pr and pr.pose_landmarks:
-                            l_ankles_y.append(pr.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_ANKLE.value].y)
-                            r_ankles_y.append(pr.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_ANKLE.value].y)
-                        else:
-                            l_ankles_y.append(None)
-                            r_ankles_y.append(None)
-
-                    logger.info(f"ML step detection found {len(foot_strikes)} steps")
-                except Exception as e:
-                    logger.warning("ML step detection failed, falling back to heuristic: %s", e)
-                    enable_ml_steps = False
-
-            if not enable_ml_steps:
-                # --- HEURISTIC STEP DETECTION ---
-                stride_len_val = estimate_stride_length(athlete_height_m)
-
-                frame_indices = list(range(step_window_start, step_window_end))
-
-                foot_strikes, l_ankles_y, r_ankles_y = detect_foot_strikes(
-                    pose_landmarks_list[step_window_start:step_window_end],
-                    frame_indices,
-                    fps,
-                    min_lift=step_min_lift,
-                    min_peak_dist_frames=step_min_dist
+                ml_predictions = predict_steps(
+                    pose_results, feature_cols, ml_pipeline,
+                    start_frame=step_window_start,
+                    end_frame=step_window_end - 1,
                 )
+                logger.info("ML raw predictions: %d frames, %d left-contact, %d right-contact",
+                            len(ml_predictions),
+                            sum(1 for p in ml_predictions if p['left_contact']),
+                            sum(1 for p in ml_predictions if p['right_contact']))
 
-                from pvapp.core.gait_analysis import interpolate_missed_steps
-                foot_strikes = interpolate_missed_steps(foot_strikes)
+                ml_steps = clean_predictions(ml_predictions, fps=fps)
+                logger.info("ML clean steps: %d steps after cleaning", len(ml_steps))
 
-            # Cadence (Steps per Minute) — shared by both paths
+                # Convert ML steps -> foot_strikes format for downstream compatibility
+                foot_strikes = []
+                for step in ml_steps:
+                    mid_frame = (step['start_frame'] + step['end_frame']) // 2
+                    pr = pose_results[mid_frame] if mid_frame < len(pose_results) else None
+                    if pr and pr.pose_landmarks:
+                        ankle_idx = (mp_pose.PoseLandmark.LEFT_ANKLE.value
+                                     if step['side'] == 'left'
+                                     else mp_pose.PoseLandmark.RIGHT_ANKLE.value)
+                        lm = pr.pose_landmarks.landmark[ankle_idx]
+                        pt = (lm.x, lm.y)
+                    else:
+                        pt = (0.5, 0.9)
+                    foot_strikes.append({
+                        'frame': mid_frame,
+                        'side': step['side'],
+                        'pt': pt,
+                        'confidence': 1.0,
+                    })
+
+                # Build ankle Y arrays for visualization
+                l_ankles_y = []
+                r_ankles_y = []
+                for i in range(step_window_start, step_window_end):
+                    pr = pose_results[i] if i < len(pose_results) else None
+                    if pr and pr.pose_landmarks:
+                        l_ankles_y.append(pr.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_ANKLE.value].y)
+                        r_ankles_y.append(pr.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_ANKLE.value].y)
+                    else:
+                        l_ankles_y.append(None)
+                        r_ankles_y.append(None)
+
+                for i, strike in enumerate(foot_strikes):
+                    logger.info("  step %d: frame=%d, side=%s, pt=(%.3f, %.3f)",
+                                i + 1, strike['frame'], strike['side'],
+                                strike['pt'][0], strike['pt'][1])
+                logger.info("ML step detection found %d steps total", len(foot_strikes))
+
+            except Exception as e:
+                logger.error("ML step detection failed: %s\n%s", e, traceback.format_exc())
+                foot_strikes = []
+                l_ankles_y = []
+                r_ankles_y = []
+
+            # Cadence (Steps per Minute)
             from pvapp.core.gait_analysis import calculate_pixel_stride_and_convert
             c_start = start_frame if start_frame is not None else 0
             c_end = plant_frame if plant_frame is not None else (end_frame if end_frame else len(pose_landmarks_list))
@@ -290,7 +288,7 @@ def run_unified_pipeline(
             valid_strikes = [s for s in foot_strikes if c_start <= s['frame'] < c_end]
 
             duration_min = max(0, c_end - c_start) / fps / 60.0
-            cadence_val = calculate_cadence(valid_strikes, duration_min)
+            cadence_val = calculate_cadence(valid_strikes, duration_min) if foot_strikes else None
 
     # --- Step 2.4: Approach Velocity ---
     velocity_data = []
@@ -773,4 +771,4 @@ def run_unified_pipeline(
     # Prepare return values
     calib_px = (p1_len_px, p2_len_px)
     ankles = (l_ankles, r_ankles)
-    return output_path, stride_data_list, calib_px, ankles, bend_data, height_scale_m_per_px, max_hip_height_data, pose_results, pole_results, velocity_data
+    return output_path, stride_data_list, calib_px, ankles, bend_data, height_scale_m_per_px, max_hip_height_data, pose_results, pole_results, velocity_data, cadence_val

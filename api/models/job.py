@@ -29,11 +29,8 @@ class JobConfig(BaseModel):
     enable_max_hip_height: bool = True
     enable_pole: bool = True
     enable_manual_pole_frames: bool = False
-    enable_ml_steps: bool = False
     pole_conf: float = 0.25
     pole_length_m: Optional[float] = None
-    step_min_lift: float = 0.015
-    step_min_dist: Optional[int] = None
 
 
 class Pass2Config(BaseModel):
