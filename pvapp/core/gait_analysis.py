@@ -599,10 +599,12 @@ def compute_approach_velocity(pose_landmarks_list, start_frame, plant_frame,
     dx = np.abs(np.diff(hip_x))  # pixels per frame
     velocity_px_s = dx * fps  # pixels per second
 
-    # Smooth with moving average
+    # Smooth with moving average (mode='valid' to avoid edge zero-padding artifacts)
+    half_win = 0
     if smooth_window > 1 and len(velocity_px_s) >= smooth_window:
         kernel = np.ones(smooth_window) / smooth_window
-        velocity_px_s = np.convolve(velocity_px_s, kernel, mode='same')
+        velocity_px_s = np.convolve(velocity_px_s, kernel, mode='valid')
+        half_win = smooth_window // 2
 
     # Convert to real-world units if scale available
     if scale_m_per_px and scale_m_per_px > 0:
@@ -612,7 +614,7 @@ def compute_approach_velocity(pose_landmarks_list, start_frame, plant_frame,
 
     results = []
     for i in range(len(velocity_m_s)):
-        f_idx = start_frame + i + 1  # velocity is between frame i and i+1
+        f_idx = start_frame + i + 1 + half_win
         t = (f_idx - start_frame) / fps
         v_ms = float(velocity_m_s[i])
         v_mph = v_ms * 2.23694 if scale_m_per_px else 0.0
@@ -621,7 +623,7 @@ def compute_approach_velocity(pose_landmarks_list, start_frame, plant_frame,
             'time_s': round(t, 4),
             'velocity_m_s': round(v_ms, 3),
             'velocity_mph': round(v_mph, 2),
-            'hip_x_px': round(float(hip_x[i + 1]), 1),
+            'hip_x_px': round(float(hip_x[i + 1 + half_win]), 1),
         })
 
     return results
