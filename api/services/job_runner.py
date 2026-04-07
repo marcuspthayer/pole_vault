@@ -25,10 +25,6 @@ JOB_TTL_SECONDS = 1800  # 30 minutes — enough time for both passes + viewing r
 
 MAX_FPS = 60  # Downsample anything above this at upload time
 
-# Single global executor — 1 worker to stay within RAM budget
-_executor = ProcessPoolExecutor(max_workers=1)
-
-
 def _find_ffmpeg() -> str:
     """Return path to ffmpeg binary, preferring imageio_ffmpeg then system."""
     try:
@@ -362,14 +358,22 @@ async def create_job(video_bytes: bytes, filename: str, config: dict, status: st
 
 
 async def submit_job(job_id: str) -> None:
-    """Enqueue the job for background processing."""
+    """Enqueue the job for background processing.
+
+    Uses a fresh ProcessPoolExecutor per job and shuts it down afterward
+    so the subprocess (and its ~3.5 GB of ML models) is freed from memory.
+    """
     loop = asyncio.get_event_loop()
-    loop.run_in_executor(
-        _executor,
-        _run_pipeline_subprocess,
-        job_id,
-        str(DATA_DIR),
-    )
+    executor = ProcessPoolExecutor(max_workers=1)
+    try:
+        await loop.run_in_executor(
+            executor,
+            _run_pipeline_subprocess,
+            job_id,
+            str(DATA_DIR),
+        )
+    finally:
+        executor.shutdown(wait=False)
 
 
 async def cleanup_old_jobs() -> None:
