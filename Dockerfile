@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     libopenblas0 \
     ffmpeg \
+    libx264-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
