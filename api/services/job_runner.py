@@ -386,42 +386,55 @@ async def submit_job(job_id: str) -> None:
         executor.shutdown(wait=True)
 
 
+def _cleanup_once() -> None:
+    """Delete entire job directories that are expired or orphaned."""
+    import shutil
+    now = time.time()
+    if not JOBS_DIR.exists():
+        return
+    for jdir in JOBS_DIR.iterdir():
+        if not jdir.is_dir():
+            continue
+        job_file = jdir / "job.json"
+        if not job_file.exists():
+            # Orphaned directory with no job.json — delete it
+            shutil.rmtree(jdir, ignore_errors=True)
+            logger.info("Deleted orphaned job dir %s", jdir.name)
+            continue
+        try:
+            with open(job_file) as f:
+                job = json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            shutil.rmtree(jdir, ignore_errors=True)
+            logger.info("Deleted corrupt job dir %s", jdir.name)
+            continue
+        status = job.get("status", "")
+        created = job.get("created_at", now)
+        # Mark stuck running jobs as failed after TTL
+        if status in ("running", "queued") and now - created > JOB_TTL_SECONDS:
+            job["status"] = "failed"
+            job["error"] = "Processing timed out — video may be too large or high-FPS for this server"
+            with open(job_file, "w") as wf:
+                json.dump(job, wf)
+            status = "failed"
+        # Only clean up completed or failed jobs — never in-progress ones
+        if status not in ("complete", "failed"):
+            continue
+        if now - created > JOB_TTL_SECONDS:
+            shutil.rmtree(jdir, ignore_errors=True)
+            logger.info("Deleted expired job dir %s", jdir.name)
+
+
 async def cleanup_old_jobs() -> None:
-    """Periodic task: delete large files from completed jobs older than JOB_TTL_SECONDS.
-    Keeps small files (job.json, CSVs, debug images) permanently for user history.
-    Never touches jobs that are still in progress (created, queued, running, pass1_done)."""
+    """Run cleanup on startup, then periodically."""
+    # Immediate cleanup on startup to reclaim disk from prior crashes
+    try:
+        _cleanup_once()
+    except Exception as e:
+        logger.warning("Startup cleanup error: %s", e)
     while True:
         await asyncio.sleep(120)  # check every 2 minutes
-        now = time.time()
         try:
-            for jdir in JOBS_DIR.iterdir():
-                job_file = jdir / "job.json"
-                if not job_file.exists():
-                    continue
-                with open(job_file) as f:
-                    job = json.load(f)
-                status = job.get("status", "")
-                created = job.get("created_at", now)
-                # Mark stuck running jobs as failed after TTL
-                if status in ("running", "queued") and now - created > JOB_TTL_SECONDS:
-                    job["status"] = "failed"
-                    job["error"] = "Processing timed out — video may be too large or high-FPS for this server"
-                    with open(job_file, "w") as wf:
-                        json.dump(job, wf)
-                    status = "failed"
-                # Only clean up completed or failed jobs — never in-progress ones
-                if status not in ("complete", "failed"):
-                    continue
-                created = job.get("created_at", now)
-                if now - created > JOB_TTL_SECONDS:
-                    # Delete only large files, keep metrics/CSVs/debug images
-                    deleted_any = False
-                    for large_file in ["output.mp4", "input.mp4", "precomputed.pkl"]:
-                        p = jdir / large_file
-                        if p.exists():
-                            p.unlink()
-                            deleted_any = True
-                    if deleted_any:
-                        logger.info(f"Cleaned up large files from expired job {jdir.name}")
+            _cleanup_once()
         except Exception as e:
-            logger.warning(f"Cleanup error: {e}")
+            logger.warning("Cleanup error: %s", e)

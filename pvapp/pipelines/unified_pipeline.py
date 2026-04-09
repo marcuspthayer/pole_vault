@@ -53,6 +53,15 @@ def run_unified_pipeline(
         base, ext = os.path.splitext(video_path)
         output_path = f"{base}_analyzed.mp4"
 
+    # --- Memory logging helper ---
+    def _log_mem(label):
+        try:
+            import resource
+            rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024  # Linux: KB → MB
+            logger.info(f"MEM [{label}]: RSS={rss_mb:.0f} MB")
+        except Exception:
+            pass
+
     # --- Detect best available compute device ---
     try:
         import torch
@@ -65,6 +74,8 @@ def run_unified_pipeline(
     except Exception:
         compute_device = "cpu"
         logger.info("torch not available for device check — defaulting to CPU.")
+
+    _log_mem("after imports")
 
     # --- Step 1: Data Extraction ---
     pose_results = precomputed_pose if precomputed_pose is not None else []
@@ -86,6 +97,7 @@ def run_unified_pipeline(
             progress_callback=_pose_cb,
             device=compute_device
         )
+        _log_mem("after pose extraction")
 
     # 1.2 Pole Extraction (skip if precomputed)
     if enable_pole and precomputed_pole is None:
@@ -105,6 +117,7 @@ def run_unified_pipeline(
             progress_callback=_pole_cb,
             device=compute_device
         )
+        _log_mem("after pole extraction")
 
     # --- Step 2: Analysis ---
     if progress_callback:
@@ -435,6 +448,7 @@ def run_unified_pipeline(
 
 
     # --- Step 3: Render ---
+    _log_mem("before rendering")
     if progress_callback:
         progress_callback(0.7, "Rendering Video...")
         
@@ -759,6 +773,7 @@ def run_unified_pipeline(
         
     cap.release()
     out.release()
+    _log_mem("after rendering")
 
     # Free ML model memory before ffmpeg re-encode to avoid OOM.
     # PyTorch and MediaPipe hold large allocations that glibc doesn't return
