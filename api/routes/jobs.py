@@ -45,6 +45,9 @@ async def create_analysis_job(
                            status="queued" if should_start else "created")
     if should_start:
         await submit_job(job["job_id"])
+        job = read_job(job["job_id"])
+        if job and job.get("status") == "failed":
+            raise HTTPException(503, job.get("error", "Processing failed"))
     return job
 
 
@@ -68,6 +71,10 @@ async def start_analysis(job_id: str, start_config: StartConfig):
     job["status"] = "queued"
     write_job(job_id, job)
     await submit_job(job_id)
+    # Re-read in case submit_job marked it as failed
+    job = read_job(job_id)
+    if job and job.get("status") == "failed":
+        raise HTTPException(503, job.get("error", "Processing failed"))
     return job
 
 
@@ -172,6 +179,10 @@ async def submit_pass2(job_id: str, pass2: Pass2Config):
     job["status"] = "queued"
     write_job(job_id, job)
     await submit_job(job_id)
+    # Re-read in case submit_job marked it as failed
+    job = read_job(job_id)
+    if job and job.get("status") == "failed":
+        raise HTTPException(503, job.get("error", "Processing failed"))
     return job
 
 

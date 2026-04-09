@@ -13,7 +13,7 @@ import subprocess
 import time
 import uuid
 import logging
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, BrokenExecutor
 from pathlib import Path
 from typing import Optional
 
@@ -372,8 +372,17 @@ async def submit_job(job_id: str) -> None:
             job_id,
             str(DATA_DIR),
         )
+    except BrokenExecutor:
+        # Subprocess was killed (likely OOM). Mark the job as failed so the
+        # user sees a clear error instead of a raw 500.
+        logger.error("Job %s: subprocess killed (possible OOM)", job_id)
+        job = read_job(job_id)
+        if job and job["status"] not in ("completed", "failed"):
+            job["status"] = "failed"
+            job["error"] = "Processing failed: out of memory. Try a shorter or lower-resolution video."
+            write_job(job_id, job)
     finally:
-        executor.shutdown(wait=False)
+        executor.shutdown(wait=True)
 
 
 async def cleanup_old_jobs() -> None:
