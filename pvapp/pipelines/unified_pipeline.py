@@ -759,8 +759,20 @@ def run_unified_pipeline(
         
     cap.release()
     out.release()
-    
-    # Re-encode to H.264 for browser/Streamlit playback
+
+    # Free ML model memory before ffmpeg re-encode to avoid OOM.
+    # PyTorch and MediaPipe hold large allocations that glibc doesn't return
+    # to the OS until we explicitly trim.
+    import gc
+    gc.collect()
+    try:
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)
+    except Exception:
+        pass  # Not on Linux or libc unavailable
+
+    # Re-encode to H.264 for browser playback
     try:
         import imageio_ffmpeg
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
@@ -770,11 +782,13 @@ def run_unified_pipeline(
             "-i", output_path,
             "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
             "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-threads", "1",
             "-pix_fmt", "yuv420p",
             "-movflags", "+faststart",
             h264_path,
         ]
-        # Use stdout=subprocess.PIPE, stderr=subprocess.PIPE to capture errors but not print them unless it fails
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if result.returncode == 0 and os.path.exists(h264_path):
             # Replace original with H.264 version so job_runner finds output.mp4

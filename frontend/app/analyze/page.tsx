@@ -93,13 +93,21 @@ export default function AnalyzePage() {
     if (polledJob.status === 'failed') dispatch({ type: 'FAIL', error: polledJob.error ?? 'Analysis failed' });
   }
 
+  function friendlyError(e: unknown): string {
+    const msg = String(e);
+    if (msg.includes('Failed to fetch')) {
+      return 'Could not reach the analysis server. It may be restarting — please wait a moment and try again.';
+    }
+    return msg;
+  }
+
   async function handleUpload(file: File, config: JobConfig) {
     dispatch({ type: 'UPLOAD_START' });
     try {
       const res = await apiClient.createJob(file, config, false);
       dispatch({ type: 'JOB_CREATED', job: res });
     } catch (e) {
-      dispatch({ type: 'FAIL', error: String(e) });
+      dispatch({ type: 'FAIL', error: friendlyError(e) });
     }
   }
 
@@ -112,7 +120,7 @@ export default function AnalyzePage() {
     try {
       await apiClient.startJob(jobId, config);
     } catch (e) {
-      dispatch({ type: 'FAIL', error: String(e) });
+      dispatch({ type: 'FAIL', error: friendlyError(e) });
     }
   }
 
@@ -122,7 +130,7 @@ export default function AnalyzePage() {
     try {
       await apiClient.submitPass2(jobId, config);
     } catch (e) {
-      dispatch({ type: 'FAIL', error: String(e) });
+      dispatch({ type: 'FAIL', error: friendlyError(e) });
     }
   }
 

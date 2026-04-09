@@ -15,8 +15,8 @@ WORKDIR /app
 # Pin numpy 1.x FIRST — mediapipe 0.10.9 and opencv are incompatible with numpy 2.x
 RUN pip install --no-cache-dir "numpy>=1.24,<2"
 
-# Install CPU-only PyTorch (after numpy so it won't upgrade to numpy 2.x)
-RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# Install CPU-only PyTorch — pinned to prevent memory bloat from version drift
+RUN pip install --no-cache-dir torch==2.4.1 torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cpu
 
 # Install remaining dependencies (API-only, no Streamlit)
 COPY requirements-api.txt .
