@@ -314,10 +314,38 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
         return {"status": "failed", "error": str(e), "traceback": err}
 
 
+def _ensure_disk_space() -> None:
+    """Delete ALL finished job dirs if disk is critically low (<100 MB free)."""
+    import shutil
+    try:
+        usage = shutil.disk_usage(str(JOBS_DIR))
+        free_mb = usage.free / (1024 * 1024)
+        if free_mb < 100:
+            logger.warning("Disk critically low (%.0f MB free) — purging all finished jobs", free_mb)
+            for jdir in JOBS_DIR.iterdir():
+                if not jdir.is_dir():
+                    continue
+                job_file = jdir / "job.json"
+                if not job_file.exists():
+                    shutil.rmtree(jdir, ignore_errors=True)
+                    continue
+                try:
+                    with open(job_file) as f:
+                        job = json.load(f)
+                    if job.get("status") in ("complete", "failed", "pass1_done"):
+                        shutil.rmtree(jdir, ignore_errors=True)
+                except Exception:
+                    shutil.rmtree(jdir, ignore_errors=True)
+    except Exception as e:
+        logger.warning("Disk space check failed: %s", e)
+
+
 async def create_job(video_bytes: bytes, filename: str, config: dict, status: str = "queued") -> dict:
     """
     Save uploaded video and create job record. Returns job metadata dict.
     """
+    _ensure_disk_space()
+
     job_id = str(uuid.uuid4())
     jdir = job_dir(job_id)
 
