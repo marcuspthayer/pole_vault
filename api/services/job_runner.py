@@ -24,7 +24,6 @@ JOBS_DIR = DATA_DIR / "jobs"
 JOB_TTL_SECONDS = 1800  # 30 minutes — enough time for both passes + viewing results
 
 MAX_FPS = 60  # Downsample anything above this at upload time
-MAX_HEIGHT = 1080  # Cap resolution to 1080p to limit memory usage
 
 def _find_ffmpeg() -> str:
     """Return path to ffmpeg binary, preferring imageio_ffmpeg then system."""
@@ -40,7 +39,7 @@ def _find_ffmpeg() -> str:
 
 
 def _downsample_if_needed(input_path: Path) -> Optional[float]:
-    """If video fps > MAX_FPS or resolution > MAX_HEIGHT, re-encode.
+    """If video fps > MAX_FPS, re-encode to MAX_FPS using ffmpeg.
 
     Returns the original fps if downsampling occurred, else None.
     The input file is replaced in-place on success.
@@ -49,30 +48,19 @@ def _downsample_if_needed(input_path: Path) -> Optional[float]:
         import cv2
         cap = cv2.VideoCapture(str(input_path))
         fps = cap.get(cv2.CAP_PROP_FPS) or 0
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         cap.release()
 
-        needs_fps = fps > MAX_FPS
-        needs_scale = height > MAX_HEIGHT
-
-        if not needs_fps and not needs_scale:
+        if fps <= MAX_FPS:
             return None
 
+        logger.info("Video is %.1ffps — downsampling to %dfps", fps, MAX_FPS)
         ffmpeg_exe = _find_ffmpeg()
-        temp_path = input_path.with_name("input_ds.mp4")
-
-        vf_filters = []
-        if needs_fps:
-            vf_filters.append(f"fps={MAX_FPS}")
-            logger.info("Video is %.1ffps — downsampling to %dfps", fps, MAX_FPS)
-        if needs_scale:
-            vf_filters.append(f"scale=-2:{MAX_HEIGHT}")
-            logger.info("Video is %dp — scaling to %dp", height, MAX_HEIGHT)
+        temp_path = input_path.with_name("input_60fps.mp4")
 
         cmd = [
             ffmpeg_exe, "-y",
             "-i", str(input_path),
-            "-vf", ",".join(vf_filters),
+            "-vf", f"fps={MAX_FPS}",
             "-c:v", "libx264",
             "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
@@ -80,14 +68,13 @@ def _downsample_if_needed(input_path: Path) -> Optional[float]:
             str(temp_path),
         ]
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, timeout=180)
+                                text=True, timeout=120)
 
         if result.returncode == 0 and temp_path.exists():
             os.remove(input_path)
             os.rename(temp_path, input_path)
-            logger.info("Downsampled to %s: %s",
-                         ",".join(vf_filters), input_path.name)
-            return fps if needs_fps else None
+            logger.info("Downsampled %.1ffps → %dfps: %s", fps, MAX_FPS, input_path.name)
+            return fps
         else:
             logger.warning("ffmpeg downsample failed (rc=%d): %s",
                            result.returncode, result.stderr[:500])
