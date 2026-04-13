@@ -336,6 +336,8 @@ def run_unified_pipeline(
             logger.debug(f"Peak approach velocity: {peak_v['velocity_m_s']:.2f} m/s at frame {peak_v['frame']}")
 
     # --- Step 2.5: Pole Length Calibration ---
+    p1 = None
+    p2 = None
     logger.info(f"Pole calibration gate: enable_pole={enable_pole}, skip_pole_metrics={skip_pole_metrics}, "
                 f"enable_pose={enable_pose}, pose_results={bool(pose_results)}, pole_results={bool(pole_results)}, "
                 f"start_frame={start_frame}, plant_frame={plant_frame}")
@@ -345,9 +347,6 @@ def run_unified_pipeline(
 
         logger.info(f"Starting Pole Calibration. Start: {start_frame}, Plant: {plant_frame}")
         logger.info(f"Pose Data Count: {len(pose_results)}, Pole Data Count: {len(pole_results)}")
-
-        p1 = None
-        p2 = None
 
         if not os.path.exists(debug_dir):
             os.makedirs(debug_dir)
