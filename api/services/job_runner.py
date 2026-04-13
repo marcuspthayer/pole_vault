@@ -397,8 +397,9 @@ async def create_job(video_bytes: bytes, filename: str, config: dict, status: st
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
 
-    # Quick YOLO scan to suggest a start frame (first frame with a person)
-    suggested_start = _detect_start_frame(str(input_path))
+    # TODO: move YOLO start-frame detection into the pipeline subprocess
+    # to avoid loading the model in the main FastAPI process (OOM risk).
+    suggested_start = None
 
     job = {
         "job_id": job_id,
