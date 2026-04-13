@@ -15,11 +15,6 @@ function feetInchesToM(feet: string, inches: string): number | undefined {
   return (ft * 12 + inc) * 0.0254;
 }
 
-function feetToM(feet: string): number | undefined {
-  const ft = parseFloat(feet);
-  if (isNaN(ft)) return undefined;
-  return ft * 0.3048;
-}
 
 export function VideoUploader({ onSubmit, loading }: Props) {
   const [file, setFile] = useState<File | null>(null);
@@ -33,6 +28,7 @@ export function VideoUploader({ onSubmit, loading }: Props) {
   const [heightFt, setHeightFt] = useState('');
   const [heightIn, setHeightIn] = useState('');
   const [poleLengthFt, setPoleLengthFt] = useState('');
+  const [poleLengthIn, setPoleLengthIn] = useState('');
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -54,7 +50,7 @@ export function VideoUploader({ onSubmit, loading }: Props) {
       poleLength = poleLengthM ? parseFloat(poleLengthM) : undefined;
     } else {
       athleteHeight = feetInchesToM(heightFt, heightIn);
-      poleLength = feetToM(poleLengthFt);
+      poleLength = feetInchesToM(poleLengthFt, poleLengthIn);
     }
 
     const config: JobConfig = {
@@ -151,16 +147,29 @@ export function VideoUploader({ onSubmit, loading }: Props) {
           </div>
           <div className="space-y-1">
             <label className="text-sm text-gray-400">Pole length</label>
-            <div className="relative">
-              <input
-                type="number"
-                min="10" max="20" step="0.5"
-                placeholder="16"
-                value={poleLengthFt}
-                onChange={e => setPoleLengthFt(e.target.value)}
-                className="w-full px-3 py-2 pr-10 rounded-lg bg-gray-800 text-white border border-gray-700 focus:outline-none focus:border-blue-500"
-              />
-              <span className="absolute right-2.5 top-2.5 text-gray-500 text-sm">ft</span>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  type="number"
+                  min="10" max="20" step="1"
+                  placeholder="16"
+                  value={poleLengthFt}
+                  onChange={e => setPoleLengthFt(e.target.value)}
+                  className="w-full px-3 py-2 pr-8 rounded-lg bg-gray-800 text-white border border-gray-700 focus:outline-none focus:border-blue-500"
+                />
+                <span className="absolute right-2.5 top-2.5 text-gray-500 text-sm">ft</span>
+              </div>
+              <div className="relative flex-1">
+                <input
+                  type="number"
+                  min="0" max="11" step="1"
+                  placeholder="0"
+                  value={poleLengthIn}
+                  onChange={e => setPoleLengthIn(e.target.value)}
+                  className="w-full px-3 py-2 pr-8 rounded-lg bg-gray-800 text-white border border-gray-700 focus:outline-none focus:border-blue-500"
+                />
+                <span className="absolute right-2.5 top-2.5 text-gray-500 text-sm">in</span>
+              </div>
             </div>
           </div>
         </div>

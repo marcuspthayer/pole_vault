@@ -23,7 +23,7 @@ interface FrameDef {
 
 const FRAME_DEFS: FrameDef[] = [
   { key: 'phase1_frame',     label: 'Phase 1 Frame',  description: 'Tip-to-bottom-hand, pole should be straight' },
-  { key: 'phase2_frame',     label: 'Phase 2 Frame',  description: 'Top-hand-to-bottom-hand, around plant' },
+  { key: 'phase2_frame',     label: 'Phase 2 Frame',  description: 'Bottom hand to top of pole, around plant' },
   { key: 'plant_frame',      label: 'Plant Frame',    description: 'For tip reconstruction, needs solid mask' },
   { key: 'bend_start_frame', label: 'Max Bend Start', description: 'Start of search window for maximum pole bend' },
   { key: 'bend_end_frame',   label: 'Max Bend End',   description: 'End of search window for maximum pole bend' },
