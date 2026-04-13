@@ -355,7 +355,7 @@ def run_unified_pipeline(
         try:
             if manual_pole_frames:
                 # Manual mode: single-frame analysis for Phase 1 and Phase 2
-                logger.debug(f"Manual pole frames: {manual_pole_frames}")
+                logger.info(f"Manual pole frames: {manual_pole_frames}")
                 p1 = analyze_pole_segment_single_frame(
                     pole_results, pose_results, video_path,
                     manual_pole_frames['phase1'], width, height, phase="phase1"
@@ -371,7 +371,11 @@ def run_unified_pipeline(
                     start_frame, plant_frame
                 )
 
-            logger.debug(f"Calibration Results: P1={p1 is not None}, P2={p2 is not None}")
+            logger.info(f"Calibration Results: P1={p1 is not None}, P2={p2 is not None}")
+            if not p1:
+                logger.info("P1 (tip-to-bottom-hand) calibration returned None")
+            if not p2:
+                logger.info("P2 (bottom-hand-to-top) calibration returned None")
 
             p1_len_px = 0
             p2_len_px = 0
@@ -399,6 +403,7 @@ def run_unified_pipeline(
     # --- Step 2.3: Pole Bend Analysis ---
     max_bend = None
     bend_series = []
+    logger.info(f"Bend gate: p1={p1 is not None}, p2={p2 is not None}, plant_frame={plant_frame}")
     if enable_pole and not skip_pole_metrics and p1 and p2 and plant_frame:
         try:
             p1_len_px = np.hypot(p1['pts'][0][0]-p1['pts'][1][0], p1['pts'][0][1]-p1['pts'][1][1])
@@ -433,9 +438,9 @@ def run_unified_pipeline(
                     plant_img_path = os.path.join(debug_dir, f"{vid_base}_debug_plant.jpg")
                     draw_debug_plant(video_path, bend_plant, max_bend_res['plant_points'], p1_l, plant_img_path)
 
-                logger.debug(f"Max Bend: {max_bend:.2f}%")
+                logger.info(f"Max Bend: {max_bend:.2f}%")
             else:
-                logger.debug(f"Bend Analysis Failed")
+                logger.info("Bend Analysis returned None")
         except Exception as e:
             logger.error(f"Bend Analysis failed: {e}")
 

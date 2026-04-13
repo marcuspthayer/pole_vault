@@ -159,22 +159,14 @@ def clean_predictions(predictions, fps=240,
                       min_inter_step_seconds=0.12):
     """Convert noisy per-frame predictions into clean, discrete steps.
 
-    Thresholds are specified in seconds and converted to frames using the
-    video's FPS, so the same logic works across 30fps–240fps+ footage.
-
-    Algorithm:
-      1. Assign each frame a dominant side (left/right/none) based on
-         which foot has higher contact probability.
-      2. Smooth short side-flips: RLE the per-frame sides, then replace
-         any contact segment shorter than *min_step_frames* with the side
-         of its longest adjacent neighbour (eliminates brief L↔R noise).
-      3. Run-length encode the smoothed sides.
-      4. Bridge short gaps (<=max_gap_frames) between same-side segments.
-      5. Absorb short opposite-side segments (<= min_step_frames) into
-         their neighbours.
-      6. Drop remaining short segments.
-      7. Enforce alternation — consecutive same-side steps keep the longer.
-      8. Number and return.
+    Group-based algorithm:
+      1. Assign each frame a dominant side (left/right/none).
+      2. Split into contact groups at gap boundaries (runs of None frames).
+      3. Assign each group a dominant side (majority L or R wins).
+      4. If one group is ~2x the median length, try splitting it at the
+         L/R boundary into two steps.
+      5. Enforce alternation.
+      6. Number and return.
 
     Returns:
         list of dicts, each with:
@@ -185,7 +177,6 @@ def clean_predictions(predictions, fps=240,
         return []
 
     min_step_frames = max(2, round(fps * min_step_seconds))
-    max_gap_frames = max(1, round(fps * max_gap_seconds))
 
     # Step 1: assign dominant side per frame
     frame_sides = []  # list of (frame_idx, side_or_none)
@@ -209,138 +200,108 @@ def clean_predictions(predictions, fps=240,
     if not frame_sides:
         return []
 
-    # Step 2: smooth short side-flips before main RLE.
-    # Quick RLE pass to find segments, then replace short contact segments
-    # with the side of their longest adjacent contact neighbour.
-    def _rle(sides_list):
-        """Run-length encode (side, start_idx, end_idx) over a list."""
-        segs = []
-        cur = sides_list[0][1]
-        start = 0
-        for i in range(1, len(sides_list)):
-            if sides_list[i][1] != cur:
-                segs.append((cur, start, i - 1))
-                cur = sides_list[i][1]
-                start = i
-        segs.append((cur, start, len(sides_list) - 1))
-        return segs
-
-    pre_segs = _rle(frame_sides)
-
-    # For each short contact segment, replace with the dominant neighbour
-    changed = True
-    while changed:
-        changed = False
-        for seg_i, (seg_side, seg_start, seg_end) in enumerate(pre_segs):
-            if seg_side is None:
-                continue
-            seg_len = seg_end - seg_start + 1
-            if seg_len >= min_step_frames:
-                continue
-
-            # Find adjacent contact neighbours
-            prev_side, prev_len = None, 0
-            for j in range(seg_i - 1, -1, -1):
-                if pre_segs[j][0] is not None:
-                    prev_side = pre_segs[j][0]
-                    prev_len = pre_segs[j][2] - pre_segs[j][1] + 1
-                    break
-
-            next_side, next_len = None, 0
-            for j in range(seg_i + 1, len(pre_segs)):
-                if pre_segs[j][0] is not None:
-                    next_side = pre_segs[j][0]
-                    next_len = pre_segs[j][2] - pre_segs[j][1] + 1
-                    break
-
-            # Pick the longer neighbour's side
-            if prev_len >= next_len and prev_side is not None:
-                replace_side = prev_side
-            elif next_side is not None:
-                replace_side = next_side
-            else:
-                continue
-
-            if replace_side != seg_side:
-                for k in range(seg_start, seg_end + 1):
-                    frame_sides[k] = (frame_sides[k][0], replace_side)
-                changed = True
-
-        if changed:
-            pre_segs = _rle(frame_sides)
-
-    # Step 3: run-length encode (on the smoothed sides, using frame indices)
-    segments = []  # list of (side, start_frame, end_frame)
-    cur_side = frame_sides[0][1]
-    cur_start = frame_sides[0][0]
-
-    for i in range(1, len(frame_sides)):
-        frame, side = frame_sides[i]
-        if side != cur_side:
-            segments.append((cur_side, cur_start, frame_sides[i - 1][0]))
-            cur_side = side
-            cur_start = frame
-    segments.append((cur_side, cur_start, frame_sides[-1][0]))
-
-    # Step 4: bridge short gaps between same-side segments
-    merged = True
-    while merged:
-        merged = False
-        new_segments = []
-        i = 0
-        while i < len(segments):
-            if i + 2 < len(segments):
-                s1_side, s1_start, s1_end = segments[i]
-                gap_side, gap_start, gap_end = segments[i + 1]
-                s2_side, s2_start, s2_end = segments[i + 2]
-
-                gap_len = gap_end - gap_start + 1
-
-                # Bridge None gaps between same-side contact segments
-                if (s1_side is not None and s1_side == s2_side
-                        and gap_side is None and gap_len <= max_gap_frames):
-                    new_segments.append((s1_side, s1_start, s2_end))
-                    i += 3
-                    merged = True
-                    continue
-
-                # Absorb short opposite-side blips between same-side segments
-                if (s1_side is not None and s1_side == s2_side
-                        and gap_side is not None and gap_side != s1_side
-                        and gap_len <= min_step_frames):
-                    new_segments.append((s1_side, s1_start, s2_end))
-                    i += 3
-                    merged = True
-                    continue
-
-            new_segments.append(segments[i])
-            i += 1
-
-        segments = new_segments
-
-    # Step 5: drop short contact segments and None segments
-    steps = []
-    for side, start, end in segments:
+    # Step 2: split into contact groups at gap boundaries
+    # A gap is any run of None (no-contact) frames.
+    groups = []  # list of lists of (frame_idx, side)
+    current_group = []
+    for frame, side in frame_sides:
         if side is None:
-            continue
-        duration = end - start + 1
-        if duration < min_step_frames:
-            continue
+            if current_group:
+                groups.append(current_group)
+                current_group = []
+        else:
+            current_group.append((frame, side))
+    if current_group:
+        groups.append(current_group)
+
+    # Drop groups shorter than min_step_frames
+    groups = [g for g in groups if len(g) >= min_step_frames]
+
+    if not groups:
+        return []
+
+    # Step 3: assign dominant side per group (majority wins)
+    steps = []
+    for group in groups:
+        left_count = sum(1 for _, s in group if s == "left")
+        right_count = sum(1 for _, s in group if s == "right")
+        side = "left" if left_count >= right_count else "right"
+
+        start_frame = group[0][0]
+        end_frame = group[-1][0]
+        mid_frame = group[len(group) // 2][0]
+
         steps.append({
             "side": side,
-            "start_frame": start,
-            "end_frame": end,
-            "touchdown_frame": start,
-            "liftoff_frame": end,
+            "start_frame": start_frame,
+            "end_frame": end_frame,
+            "touchdown_frame": mid_frame,
+            "liftoff_frame": end_frame,
+            "_group": group,  # keep for potential split
         })
 
-    # Step 6: enforce alternation — if consecutive steps are same side,
-    # keep the longer one
+    # Step 4: try splitting one suspiciously long group
+    if len(steps) >= 2:
+        lengths = sorted(s["end_frame"] - s["start_frame"] + 1 for s in steps)
+        median_len = lengths[len(lengths) // 2]
+
+        split_done = False
+        for i, s in enumerate(steps):
+            grp_len = s["end_frame"] - s["start_frame"] + 1
+            if grp_len > median_len * 1.8 and not split_done:
+                group = s["_group"]
+                # Find the best split point: where the dominant side flips
+                # Look for the longest run of side A followed by longest run of side B
+                best_split = None
+                best_score = 0
+                for j in range(min_step_frames, len(group) - min_step_frames):
+                    left_half = group[:j]
+                    right_half = group[j:]
+                    l1 = sum(1 for _, sd in left_half if sd == "left")
+                    r1 = sum(1 for _, sd in left_half if sd == "right")
+                    l2 = sum(1 for _, sd in right_half if sd == "left")
+                    r2 = sum(1 for _, sd in right_half if sd == "right")
+                    # Score: how cleanly do the halves separate into different sides?
+                    side1 = "left" if l1 >= r1 else "right"
+                    side2 = "left" if l2 >= r2 else "right"
+                    if side1 != side2:
+                        score = max(l1, r1) + max(l2, r2)
+                        if score > best_score:
+                            best_score = score
+                            best_split = j
+
+                if best_split is not None:
+                    g1 = group[:best_split]
+                    g2 = group[best_split:]
+                    l1 = sum(1 for _, sd in g1 if sd == "left")
+                    r1 = sum(1 for _, sd in g1 if sd == "right")
+                    l2 = sum(1 for _, sd in g2 if sd == "left")
+                    r2 = sum(1 for _, sd in g2 if sd == "right")
+
+                    s1 = {
+                        "side": "left" if l1 >= r1 else "right",
+                        "start_frame": g1[0][0],
+                        "end_frame": g1[-1][0],
+                        "touchdown_frame": g1[len(g1) // 2][0],
+                        "liftoff_frame": g1[-1][0],
+                        "_group": g1,
+                    }
+                    s2 = {
+                        "side": "left" if l2 >= r2 else "right",
+                        "start_frame": g2[0][0],
+                        "end_frame": g2[-1][0],
+                        "touchdown_frame": g2[len(g2) // 2][0],
+                        "liftoff_frame": g2[-1][0],
+                        "_group": g2,
+                    }
+                    steps = steps[:i] + [s1, s2] + steps[i + 1:]
+                    split_done = True
+
+    # Step 5: enforce alternation — consecutive same-side steps keep the longer
     if len(steps) > 1:
         cleaned = [steps[0]]
         for s in steps[1:]:
             if s["side"] == cleaned[-1]["side"]:
-                # Keep whichever is longer
                 prev_len = cleaned[-1]["end_frame"] - cleaned[-1]["start_frame"]
                 cur_len = s["end_frame"] - s["start_frame"]
                 if cur_len > prev_len:
@@ -349,24 +310,9 @@ def clean_predictions(predictions, fps=240,
                 cleaned.append(s)
         steps = cleaned
 
-    # Step 7: inter-step timing — drop steps that are too close together
-    min_inter_frames = max(2, round(fps * min_inter_step_seconds))
-    if len(steps) > 1:
-        timing_cleaned = [steps[0]]
-        for s in steps[1:]:
-            gap = s['start_frame'] - timing_cleaned[-1]['end_frame']
-            if gap < min_inter_frames:
-                # Keep whichever step is longer
-                prev_len = timing_cleaned[-1]['end_frame'] - timing_cleaned[-1]['start_frame']
-                cur_len = s['end_frame'] - s['start_frame']
-                if cur_len > prev_len:
-                    timing_cleaned[-1] = s
-            else:
-                timing_cleaned.append(s)
-        steps = timing_cleaned
-
-    # Number them
+    # Clean up internal keys and number
     for i, s in enumerate(steps):
+        s.pop("_group", None)
         s["step_number"] = i + 1
 
     return steps
