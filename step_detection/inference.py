@@ -155,7 +155,8 @@ def predict_steps(pose_results, feature_cols, pipeline,
 # Step cleaning / grouping
 # ============================================================================
 def clean_predictions(predictions, fps=240,
-                      min_step_seconds=0.03, max_gap_seconds=0.05):
+                      min_step_seconds=0.12, max_gap_seconds=0.05,
+                      min_inter_step_seconds=0.10):
     """Convert noisy per-frame predictions into clean, discrete steps.
 
     Thresholds are specified in seconds and converted to frames using the
@@ -347,6 +348,22 @@ def clean_predictions(predictions, fps=240,
             else:
                 cleaned.append(s)
         steps = cleaned
+
+    # Step 7: inter-step timing — drop steps that are too close together
+    min_inter_frames = max(2, round(fps * min_inter_step_seconds))
+    if len(steps) > 1:
+        timing_cleaned = [steps[0]]
+        for s in steps[1:]:
+            gap = s['start_frame'] - timing_cleaned[-1]['end_frame']
+            if gap < min_inter_frames:
+                # Keep whichever step is longer
+                prev_len = timing_cleaned[-1]['end_frame'] - timing_cleaned[-1]['start_frame']
+                cur_len = s['end_frame'] - s['start_frame']
+                if cur_len > prev_len:
+                    timing_cleaned[-1] = s
+            else:
+                timing_cleaned.append(s)
+        steps = timing_cleaned
 
     # Number them
     for i, s in enumerate(steps):

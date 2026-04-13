@@ -218,6 +218,7 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
             precomputed_pose=precomputed_pose,
             precomputed_pole=precomputed_pole,
             debug_dir=debug_dir,
+            crop_before_start=config.get("crop_before_start", False),
         )
 
         # result is an 11-tuple:
@@ -340,6 +341,36 @@ def _ensure_disk_space() -> None:
         logger.warning("Disk space check failed: %s", e)
 
 
+def _detect_start_frame(video_path: str, max_check: int = 50, stride: int = 10) -> Optional[int]:
+    """Scan early frames to find the first one containing a person (YOLO class 0)."""
+    try:
+        import cv2 as _cv2
+        from ultralytics import YOLO
+        model = YOLO("yolo11n.pt")
+        cap = _cv2.VideoCapture(video_path)
+        total = int(cap.get(_cv2.CAP_PROP_FRAME_COUNT))
+
+        for i in range(0, min(total, max_check * stride), stride):
+            cap.set(_cv2.CAP_PROP_POS_FRAMES, i)
+            ret, frame = cap.read()
+            if not ret:
+                break
+            results = model.predict(source=frame, conf=0.15, imgsz=320, verbose=False)
+            if len(results) > 0 and len(results[0].boxes) > 0:
+                import numpy as np
+                classes = results[0].boxes.cls.cpu().numpy().astype(int)
+                if 0 in classes:
+                    cap.release()
+                    del model
+                    return max(0, i)
+        cap.release()
+        del model
+        return None
+    except Exception as e:
+        logger.warning("Auto start-frame detection failed: %s", e)
+        return None
+
+
 async def create_job(video_bytes: bytes, filename: str, config: dict, status: str = "queued") -> dict:
     """
     Save uploaded video and create job record. Returns job metadata dict.
@@ -366,6 +397,9 @@ async def create_job(video_bytes: bytes, filename: str, config: dict, status: st
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
 
+    # Quick YOLO scan to suggest a start frame (first frame with a person)
+    suggested_start = _detect_start_frame(str(input_path))
+
     job = {
         "job_id": job_id,
         "status": status,
@@ -377,6 +411,7 @@ async def create_job(video_bytes: bytes, filename: str, config: dict, status: st
         "width": width,
         "height": height,
         "original_fps": original_fps,
+        "suggested_start_frame": suggested_start,
         "created_at": time.time(),
         "metrics": None,
         "result_files": None,

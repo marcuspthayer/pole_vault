@@ -38,6 +38,7 @@ def run_unified_pipeline(
     precomputed_pose=None, # Pre-extracted pose results (avoids re-running detection)
     precomputed_pole=None, # Pre-extracted pole results (avoids re-running detection)
     debug_dir=None, # Directory for debug images (if None, uses ./debug_output)
+    crop_before_start=False, # Crop output video to start 0.25s before start_frame
 ):
     """
     Unified pipeline that:
@@ -496,10 +497,8 @@ def run_unified_pipeline(
             hud_top_right_static.append(f"Hip droop: {hip_droop_pct:+.1f}%")
             hud_top_right_static.append(f"Hip trend: {hip_droop_trend_pct:+.1f}%")
 
-    # Bottom-right: window info (static)
+    # Bottom-right: (reserved, currently empty)
     hud_bottom_right = []
-    if start_frame is not None:
-        hud_bottom_right.append(f"Window: {start_frame}-{plant_frame}-{end_frame}")
 
     # Top-left: predicted clear + max bend (conditional, added per-frame)
     # These are built per-frame since they only appear after certain frames
@@ -529,6 +528,10 @@ def run_unified_pipeline(
                 'frame': bend_data.get('max_bend_frame', plant_frame),
                 'label': f"Max Bend: {mb_val:.1f}%"
             }
+
+    if bend_data:
+        logger.debug(f"bend_data keys: {list(bend_data.keys())}, points={bend_data.get('points')}")
+    logger.debug(f"max_bend_annotation: {max_bend_annotation}")
 
     # Precompute velocity HUD text (bottom-left)
     velocity_hud_lines = []
@@ -577,9 +580,14 @@ def run_unified_pipeline(
             'interpolated': is_interp
         })
 
+    # Crop: only write output frames from render_start onward
+    render_start = 0
+    if crop_before_start and start_frame is not None:
+        render_start = max(0, start_frame - int(0.25 * fps))
+
     frame_idx = 0
     stride_idx = 0
-    
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -697,6 +705,8 @@ def run_unified_pipeline(
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
         # Draw Max Bend overlay (persistent from max bend frame onward)
+        if max_bend_annotation and frame_idx == max_bend_annotation['frame']:
+            logger.debug(f"Drawing max bend annotation at frame {frame_idx}: tip={max_bend_annotation['tip']}, top={max_bend_annotation['top']}")
         if max_bend_annotation and frame_idx >= max_bend_annotation['frame']:
             mb_tip = max_bend_annotation['tip']
             mb_top = max_bend_annotation['top']
@@ -768,9 +778,10 @@ def run_unified_pipeline(
                 draw_outlined_text(frame, txt, (10, y),
                                    hud_font, hud_scale, (0, 255, 0), hud_thick)
 
-        out.write(frame)
+        if frame_idx >= render_start:
+            out.write(frame)
         frame_idx += 1
-        
+
     cap.release()
     out.release()
     _log_mem("after rendering")

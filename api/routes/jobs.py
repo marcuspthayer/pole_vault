@@ -67,6 +67,8 @@ async def start_analysis(job_id: str, start_config: StartConfig):
         job["config"]["plant_frame"] = start_config.plant_frame
     if start_config.end_frame is not None:
         job["config"]["end_frame"] = start_config.end_frame
+    if start_config.crop_before_start:
+        job["config"]["crop_before_start"] = True
 
     job["status"] = "queued"
     write_job(job_id, job)

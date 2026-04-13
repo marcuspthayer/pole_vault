@@ -157,6 +157,7 @@ export default function AnalyzePage() {
             jobId={currentJob.job_id}
             totalFrames={currentJob.total_frames ?? 300}
             fps={currentJob.fps ?? 30}
+            suggestedStartFrame={currentJob.suggested_start_frame}
             onSubmit={handleFramesSelected}
             loading={false}
           />

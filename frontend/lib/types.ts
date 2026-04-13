@@ -6,6 +6,7 @@ export interface StartConfig {
   start_frame?: number;
   plant_frame?: number;
   end_frame?: number;
+  crop_before_start?: boolean;
 }
 
 export interface JobConfig {
@@ -78,6 +79,7 @@ export interface JobResponse {
   fps?: number;
   width?: number;
   height?: number;
+  suggested_start_frame?: number;
   metrics?: JobMetrics;
   result_files?: JobResultFiles;
 }

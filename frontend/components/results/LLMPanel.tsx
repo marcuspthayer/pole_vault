@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
 import type { JobMetrics } from '@/lib/types';
 
 interface Props {
@@ -93,8 +94,17 @@ export function LLMPanel({ metrics }: Props) {
       {visible && (
         <div className="px-5 py-4">
           {text ? (
-            <div className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">
-              {text}
+            <div className="text-sm text-gray-300 leading-relaxed
+              [&_h1]:text-lg [&_h1]:font-bold [&_h1]:text-white [&_h1]:mt-4 [&_h1]:mb-2
+              [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-white [&_h2]:mt-3 [&_h2]:mb-1
+              [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-gray-200 [&_h3]:mt-2 [&_h3]:mb-1
+              [&_strong]:text-white [&_strong]:font-semibold
+              [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:my-1
+              [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:my-1
+              [&_li]:my-0.5
+              [&_hr]:border-gray-700 [&_hr]:my-3
+              [&_p]:my-1">
+              <ReactMarkdown>{text}</ReactMarkdown>
               {loading && <span className="inline-block w-1.5 h-4 bg-blue-400 ml-0.5 animate-pulse" />}
             </div>
           ) : (

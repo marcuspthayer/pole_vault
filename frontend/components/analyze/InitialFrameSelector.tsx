@@ -8,6 +8,7 @@ interface Props {
   jobId: string;
   totalFrames: number;
   fps: number;
+  suggestedStartFrame?: number;
   onSubmit: (config: StartConfig) => void;
   loading: boolean;
 }
@@ -24,13 +25,14 @@ const FRAMES: FrameDef[] = [
   { key: 'end_frame',   label: '3. End Frame',   description: 'Athlete lands or leaves frame' },
 ];
 
-export function InitialFrameSelector({ jobId, totalFrames, fps, onSubmit, loading }: Props) {
+export function InitialFrameSelector({ jobId, totalFrames, fps, suggestedStartFrame, onSubmit, loading }: Props) {
   const [frames, setFrames] = useState<Record<string, number>>({
-    start_frame: 0,
+    start_frame: suggestedStartFrame ?? 0,
     plant_frame: Math.round(totalFrames * 0.8),
     end_frame: totalFrames - 1,
   });
   const [fullVideo, setFullVideo] = useState(false);
+  const [cropBeforeStart, setCropBeforeStart] = useState(false);
 
   function setFrame(key: string, value: number) {
     setFrames(prev => ({ ...prev, [key]: Math.max(0, Math.min(totalFrames - 1, value)) }));
@@ -38,12 +40,13 @@ export function InitialFrameSelector({ jobId, totalFrames, fps, onSubmit, loadin
 
   function handleSubmit() {
     if (fullVideo) {
-      onSubmit({});
+      onSubmit({ crop_before_start: cropBeforeStart });
     } else {
       onSubmit({
         start_frame: frames.start_frame,
         plant_frame: frames.plant_frame,
         end_frame: frames.end_frame,
+        crop_before_start: cropBeforeStart,
       });
     }
   }
@@ -112,15 +115,27 @@ export function InitialFrameSelector({ jobId, totalFrames, fps, onSubmit, loadin
         );
       })}
 
-      <div className="flex items-center gap-2 text-sm text-gray-400">
-        <input
-          type="checkbox"
-          id="fullVideo"
-          checked={fullVideo}
-          onChange={e => setFullVideo(e.target.checked)}
-          className="accent-blue-500"
-        />
-        <label htmlFor="fullVideo">Ignore sliders (process full video)</label>
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 text-sm text-gray-400">
+          <input
+            type="checkbox"
+            id="fullVideo"
+            checked={fullVideo}
+            onChange={e => setFullVideo(e.target.checked)}
+            className="accent-blue-500"
+          />
+          <label htmlFor="fullVideo">Ignore sliders (process full video)</label>
+        </div>
+        <div className="flex items-center gap-2 text-sm text-gray-400">
+          <input
+            type="checkbox"
+            id="cropBefore"
+            checked={cropBeforeStart}
+            onChange={e => setCropBeforeStart(e.target.checked)}
+            className="accent-blue-500"
+          />
+          <label htmlFor="cropBefore">Crop output video to start 0.25s before start frame</label>
+        </div>
       </div>
 
       <p className="text-xs text-gray-500">
