@@ -155,8 +155,8 @@ def predict_steps(pose_results, feature_cols, pipeline,
 # Step cleaning / grouping
 # ============================================================================
 def clean_predictions(predictions, fps=240,
-                      min_step_seconds=0.12, max_gap_seconds=0.05,
-                      min_inter_step_seconds=0.10):
+                      min_step_seconds=0.05, max_gap_seconds=0.05,
+                      min_inter_step_seconds=0.12):
     """Convert noisy per-frame predictions into clean, discrete steps.
 
     Thresholds are specified in seconds and converted to frames using the

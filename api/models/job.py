@@ -17,6 +17,7 @@ class StartConfig(BaseModel):
     plant_frame: Optional[int] = None
     end_frame: Optional[int] = None
     crop_before_start: bool = False
+    crop_after_end: bool = False
 
 
 class JobConfig(BaseModel):

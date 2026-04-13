@@ -33,6 +33,7 @@ export function InitialFrameSelector({ jobId, totalFrames, fps, suggestedStartFr
   });
   const [fullVideo, setFullVideo] = useState(false);
   const [cropBeforeStart, setCropBeforeStart] = useState(false);
+  const [cropAfterEnd, setCropAfterEnd] = useState(false);
 
   function setFrame(key: string, value: number) {
     setFrames(prev => ({ ...prev, [key]: Math.max(0, Math.min(totalFrames - 1, value)) }));
@@ -40,13 +41,14 @@ export function InitialFrameSelector({ jobId, totalFrames, fps, suggestedStartFr
 
   function handleSubmit() {
     if (fullVideo) {
-      onSubmit({ crop_before_start: cropBeforeStart });
+      onSubmit({ crop_before_start: cropBeforeStart, crop_after_end: cropAfterEnd });
     } else {
       onSubmit({
         start_frame: frames.start_frame,
         plant_frame: frames.plant_frame,
         end_frame: frames.end_frame,
         crop_before_start: cropBeforeStart,
+        crop_after_end: cropAfterEnd,
       });
     }
   }
@@ -135,6 +137,16 @@ export function InitialFrameSelector({ jobId, totalFrames, fps, suggestedStartFr
             className="accent-blue-500"
           />
           <label htmlFor="cropBefore">Crop output video to start 0.25s before start frame</label>
+        </div>
+        <div className="flex items-center gap-2 text-sm text-gray-400">
+          <input
+            type="checkbox"
+            id="cropAfter"
+            checked={cropAfterEnd}
+            onChange={e => setCropAfterEnd(e.target.checked)}
+            className="accent-blue-500"
+          />
+          <label htmlFor="cropAfter">Crop output video to end 0.25s after end frame</label>
         </div>
       </div>
 

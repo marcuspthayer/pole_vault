@@ -69,6 +69,8 @@ async def start_analysis(job_id: str, start_config: StartConfig):
         job["config"]["end_frame"] = start_config.end_frame
     if start_config.crop_before_start:
         job["config"]["crop_before_start"] = True
+    if start_config.crop_after_end:
+        job["config"]["crop_after_end"] = True
 
     job["status"] = "queued"
     write_job(job_id, job)

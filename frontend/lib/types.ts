@@ -7,6 +7,7 @@ export interface StartConfig {
   plant_frame?: number;
   end_frame?: number;
   crop_before_start?: boolean;
+  crop_after_end?: boolean;
 }
 
 export interface JobConfig {

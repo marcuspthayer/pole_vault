@@ -219,6 +219,7 @@ def _run_pipeline_subprocess(job_id: str, data_dir: str) -> dict:
             precomputed_pole=precomputed_pole,
             debug_dir=debug_dir,
             crop_before_start=config.get("crop_before_start", False),
+            crop_after_end=config.get("crop_after_end", False),
         )
 
         # result is an 11-tuple:

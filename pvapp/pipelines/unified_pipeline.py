@@ -39,6 +39,7 @@ def run_unified_pipeline(
     precomputed_pole=None, # Pre-extracted pole results (avoids re-running detection)
     debug_dir=None, # Directory for debug images (if None, uses ./debug_output)
     crop_before_start=False, # Crop output video to start 0.25s before start_frame
+    crop_after_end=False, # Crop output video to end 0.25s after end_frame
 ):
     """
     Unified pipeline that:
@@ -335,12 +336,15 @@ def run_unified_pipeline(
             logger.debug(f"Peak approach velocity: {peak_v['velocity_m_s']:.2f} m/s at frame {peak_v['frame']}")
 
     # --- Step 2.5: Pole Length Calibration ---
+    logger.info(f"Pole calibration gate: enable_pole={enable_pole}, skip_pole_metrics={skip_pole_metrics}, "
+                f"enable_pose={enable_pose}, pose_results={bool(pose_results)}, pole_results={bool(pole_results)}, "
+                f"start_frame={start_frame}, plant_frame={plant_frame}")
     if enable_pole and not skip_pole_metrics and enable_pose and pose_results and pole_results and start_frame is not None and plant_frame is not None:
         if progress_callback:
             progress_callback(0.65, "Calibrating Pole Length and Stride...")
 
-        logger.debug(f"Starting Pole Calibration. Start: {start_frame}, Plant: {plant_frame}")
-        logger.debug(f"Pose Data Count: {len(pose_results)}, Pole Data Count: {len(pole_results)}")
+        logger.info(f"Starting Pole Calibration. Start: {start_frame}, Plant: {plant_frame}")
+        logger.info(f"Pose Data Count: {len(pose_results)}, Pole Data Count: {len(pole_results)}")
 
         p1 = None
         p2 = None
@@ -530,8 +534,8 @@ def run_unified_pipeline(
             }
 
     if bend_data:
-        logger.debug(f"bend_data keys: {list(bend_data.keys())}, points={bend_data.get('points')}")
-    logger.debug(f"max_bend_annotation: {max_bend_annotation}")
+        logger.info(f"bend_data keys: {list(bend_data.keys())}, points={bend_data.get('points')}")
+    logger.info(f"max_bend_annotation: {max_bend_annotation}")
 
     # Precompute velocity HUD text (bottom-left)
     velocity_hud_lines = []
@@ -580,10 +584,13 @@ def run_unified_pipeline(
             'interpolated': is_interp
         })
 
-    # Crop: only write output frames from render_start onward
+    # Crop: only write output frames within render window
     render_start = 0
+    render_end = total_frames
     if crop_before_start and start_frame is not None:
         render_start = max(0, start_frame - int(0.25 * fps))
+    if crop_after_end and end_frame is not None:
+        render_end = min(total_frames, end_frame + int(0.25 * fps))
 
     frame_idx = 0
     stride_idx = 0
@@ -706,7 +713,7 @@ def run_unified_pipeline(
 
         # Draw Max Bend overlay (persistent from max bend frame onward)
         if max_bend_annotation and frame_idx == max_bend_annotation['frame']:
-            logger.debug(f"Drawing max bend annotation at frame {frame_idx}: tip={max_bend_annotation['tip']}, top={max_bend_annotation['top']}")
+            logger.info(f"Drawing max bend annotation at frame {frame_idx}: tip={max_bend_annotation['tip']}, top={max_bend_annotation['top']}")
         if max_bend_annotation and frame_idx >= max_bend_annotation['frame']:
             mb_tip = max_bend_annotation['tip']
             mb_top = max_bend_annotation['top']
@@ -778,7 +785,7 @@ def run_unified_pipeline(
                 draw_outlined_text(frame, txt, (10, y),
                                    hud_font, hud_scale, (0, 255, 0), hud_thick)
 
-        if frame_idx >= render_start:
+        if render_start <= frame_idx <= render_end:
             out.write(frame)
         frame_idx += 1
 

@@ -38,8 +38,8 @@ export function FrameSelector({
     phase1_frame: Math.min(startFrame + 5, totalFrames - 1),
     phase2_frame: plantFrame,
     plant_frame: plantFrame,
-    bend_start_frame: Math.min(plantFrame + Math.round(0.1 * fps), endFrame),
-    bend_end_frame: Math.min(plantFrame + Math.round(0.25 * fps), endFrame),
+    bend_start_frame: Math.min(plantFrame + Math.round(0.25 * fps), endFrame),
+    bend_end_frame: Math.min(plantFrame + Math.round(0.5 * fps), endFrame),
   });
 
   function setFrame(key: string, value: number) {
