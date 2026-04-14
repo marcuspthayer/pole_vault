@@ -79,3 +79,4 @@ logs/
 # VaultSense runtime data
 /data/
 debug_output/
+.venv_train/
