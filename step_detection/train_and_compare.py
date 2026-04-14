@@ -83,7 +83,7 @@ IDX = {name: i for i, name in enumerate(MP_LANDMARK_NAMES)}
 # ===========================================================================
 # 1.  DATA LOADING
 # ===========================================================================
-def load_all_data() -> pd.DataFrame:
+def load_all_data(use_60fps=False) -> pd.DataFrame:
     """Load labels + landmarks from every video folder.
 
     Uses **per-foot** framing: for each frame in landmarks.json we
@@ -93,6 +93,9 @@ def load_all_data() -> pd.DataFrame:
 
     Features are expressed relative to the *target foot* so the model
     learns a foot-agnostic contact pattern.
+
+    If use_60fps=True, uses labels_60fps.csv and subsamples landmarks
+    to 60fps spacing (every Nth frame where N = original_fps / 60).
     """
 
     all_rows = []
@@ -100,7 +103,10 @@ def load_all_data() -> pd.DataFrame:
     for video_dir in sorted(DATA_DIR.iterdir()):
         if not video_dir.is_dir():
             continue
-        labels_path = video_dir / "labels.csv"
+        if use_60fps:
+            labels_path = video_dir / "labels_60fps.csv"
+        else:
+            labels_path = video_dir / "labels.csv"
         landmarks_path = video_dir / "landmarks.json"
         metadata_path = video_dir / "metadata.json"
         if not labels_path.exists() or not landmarks_path.exists():
@@ -113,18 +119,48 @@ def load_all_data() -> pd.DataFrame:
         with open(metadata_path, "r") as f:
             meta = json.load(f)
 
+        original_fps = meta.get("fps", 120)
+
         # Build quick lookup: frame → set of sides with contact
         contact_lookup = {}
-        for _, row in labels_df.iterrows():
-            fr = int(row["frame"])
-            contact_lookup.setdefault(fr, set()).add(row["side"])
+        if use_60fps:
+            # labels_60fps.csv has its own frame numbering at 60fps
+            # Map each 60fps frame to the nearest original landmark frame
+            ratio = original_fps / 60.0
+            for _, row in labels_df.iterrows():
+                fr60 = int(row["frame"])
+                orig_fr = round(fr60 * ratio)
+                contact_lookup.setdefault(orig_fr, set()).add(row["side"])
+        else:
+            for _, row in labels_df.iterrows():
+                fr = int(row["frame"])
+                contact_lookup.setdefault(fr, set()).add(row["side"])
+
+        # Determine which landmark frames to use
+        orig_frames = sorted(landmarks.keys(), key=int)
+
+        if use_60fps:
+            # Subsample: pick every Nth landmark frame to get ~60fps spacing
+            stride = max(1, round(original_fps / 60.0))
+            frames_to_use = orig_frames[::stride]
+        else:
+            frames_to_use = orig_frames
 
         n_pos, n_neg = 0, 0
 
-        # Iterate EVERY frame that has landmark data
-        for frame_str, lm in landmarks.items():
+        for frame_str in frames_to_use:
             frame = int(frame_str)
-            sides_contacting = contact_lookup.get(frame, set())
+            lm = landmarks[frame_str]
+
+            # For 60fps mode, check contact by finding nearest labeled frame
+            if use_60fps:
+                # Find if any labeled frame is within ±stride/2 of this frame
+                sides_contacting = set()
+                for labeled_fr, sides in contact_lookup.items():
+                    if abs(labeled_fr - frame) <= max(1, stride // 2):
+                        sides_contacting.update(sides)
+            else:
+                sides_contacting = contact_lookup.get(frame, set())
 
             # Produce one sample per foot
             for target_side in ("left", "right"):
@@ -140,8 +176,9 @@ def load_all_data() -> pd.DataFrame:
                 else:
                     n_neg += 1
 
-        print(f"  📂 {video_name:20s} — {n_pos:4d} contact, "
-              f"{n_neg:4d} non-contact  (per-foot)")
+        fps_note = f" @60fps, stride={stride}" if use_60fps else ""
+        print(f"  {video_name:20s} -- {n_pos:4d} contact, "
+              f"{n_neg:4d} non-contact  (per-foot{fps_note})")
 
     df = pd.DataFrame(all_rows)
     return df
@@ -854,21 +891,21 @@ def write_summary_report(results: dict, df: pd.DataFrame, feature_cols: list):
 # 6.  SAVE BEST MODEL
 # ===========================================================================
 def save_best_model(results: dict, models: dict, feature_cols: list,
-                    X: np.ndarray, y: np.ndarray):
+                    X: np.ndarray, y: np.ndarray, suffix: str = ""):
     """Retrain the best model (by F1) on the full dataset and save it."""
     ranked = sorted(results.items(), key=lambda x: x[1]["f1"], reverse=True)
     best_name = ranked[0][0]
     best_metrics = ranked[0][1]
 
-    print(f"  🏆 Best model: {best_name} (F1={best_metrics['f1']:.3f})")
-    print(f"  🔄 Retraining on full dataset ({len(X)} samples)…")
+    print(f"  Best model: {best_name} (F1={best_metrics['f1']:.3f})")
+    print(f"  Retraining on full dataset ({len(X)} samples)...")
 
     pipeline = models[best_name]
     pipeline.fit(X, y)
 
     # Save the trained pipeline and metadata
-    model_path = MODELS_DIR / "best_step_model.joblib"
-    meta_path = MODELS_DIR / "best_step_model_meta.json"
+    model_path = MODELS_DIR / f"best_step_model{suffix}.joblib"
+    meta_path = MODELS_DIR / f"best_step_model{suffix}_meta.json"
 
     joblib.dump(pipeline, model_path)
 
@@ -886,8 +923,8 @@ def save_best_model(results: dict, models: dict, feature_cols: list,
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
 
-    print(f"  💾 Saved model to {model_path}")
-    print(f"  💾 Saved metadata to {meta_path}")
+    print(f"  Saved model to {model_path}")
+    print(f"  Saved metadata to {meta_path}")
     return best_name, model_path
 
 
@@ -901,19 +938,23 @@ def main():
                         help="Also run Leave-One-Video-Out CV on top models")
     parser.add_argument("--lovo-only", action="store_true",
                         help="Run ONLY the LOVO CV (skip standard training)")
+    parser.add_argument("--fps60", action="store_true",
+                        help="Train on 60fps-subsampled data (for 60fps deployment)")
     args = parser.parse_args()
 
     print("=" * 60)
     print("  Step Detection — Model Comparison")
+    if args.fps60:
+        print("  ** 60fps mode — using subsampled data **")
     print("=" * 60)
 
     # 1. Load data
-    print("\n📂 Loading data…")
-    df = load_all_data()
+    print("\nLoading data...")
+    df = load_all_data(use_60fps=args.fps60)
     if df.empty:
         print("❌ No data found. Make sure labeled videos exist in step_detection/data/")
         return
-    print(f"\n✅ Loaded {len(df)} total samples from {df['video'].nunique()} videos")
+    print(f"\nLoaded {len(df)} total samples from {df['video'].nunique()} videos")
 
     # Identify feature columns
     drop_cols = ["video", "frame", "target_foot", "label"]
@@ -948,7 +989,8 @@ def main():
 
         # 6. Save best model
         print("\n💾 Saving best model…")
-        save_best_model(results, models, feature_cols, X, y)
+        save_best_model(results, models, feature_cols, X, y,
+                        suffix="_60fps" if args.fps60 else "")
 
     # 7. Leave-One-Video-Out CV
     if args.lovo or args.lovo_only:

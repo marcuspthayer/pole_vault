@@ -231,18 +231,21 @@ def run_unified_pipeline(
                             fps, step_window_start, step_window_end,
                             step_window_end - step_window_start)
 
-                from step_detection.inference import load_model as load_step_model, predict_steps, clean_predictions
+                from step_detection.inference import (
+                    load_model as load_step_model, predict_steps,
+                    clean_predictions,
+                )
 
-                ml_pipeline, ml_meta = load_step_model()
+                # Use 60fps MLP if available (production videos are 60fps)
+                ml_pipeline, ml_meta = load_step_model(prefer_60fps=True)
                 feature_cols = ml_meta["feature_columns"]
                 logger.info("ML step model loaded: %s (%d features)",
                             ml_meta.get("model_name", "unknown"), len(feature_cols))
-
                 ml_predictions = predict_steps(
                     pose_results, feature_cols, ml_pipeline,
-                    start_frame=step_window_start,
-                    end_frame=step_window_end - 1,
-                )
+                        start_frame=step_window_start,
+                        end_frame=step_window_end - 1,
+                    )
                 logger.info("ML raw predictions: %d frames, %d left-contact, %d right-contact",
                             len(ml_predictions),
                             sum(1 for p in ml_predictions if p['left_contact']),
@@ -718,15 +721,15 @@ def run_unified_pipeline(
         # Draw Max Bend overlay (persistent from max bend frame onward)
         if max_bend_annotation and frame_idx == max_bend_annotation['frame']:
             logger.info(f"Drawing max bend annotation at frame {frame_idx}: tip={max_bend_annotation['tip']}, top={max_bend_annotation['top']}")
-        if max_bend_annotation and frame_idx == max_bend_annotation['frame']:
+        if max_bend_annotation and frame_idx >= max_bend_annotation['frame']:
             mb_tip = max_bend_annotation['tip']
             mb_top = max_bend_annotation['top']
-            # Chord line from projected tip to top of pole (yellow)
+            # Chord line from reconstructed tip up to top of pole (yellow)
             cv2.line(frame, mb_tip, mb_top, (0, 255, 255), 2)
-            # Endpoints: blue for projected tip, red for top of pole
+            # Dot at reconstructed tip (blue) and top of pole (red)
             cv2.circle(frame, mb_tip, 8, (255, 0, 0), -1)
             cv2.circle(frame, mb_top, 8, (0, 0, 255), -1)
-            # Label above the top-of-pole dot
+            # Max bend label just above the top-of-pole dot
             draw_outlined_text(frame, max_bend_annotation['label'],
                                (mb_top[0] - 60, mb_top[1] - 20),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)

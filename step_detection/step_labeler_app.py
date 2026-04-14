@@ -589,8 +589,64 @@ with tab_test:
             window_sec = window_frames / t_fps if t_fps else 0
             st.caption(f"Processing window: **{window_frames}** frames ({window_sec:.2f}s)")
 
+            # Model selection
+            st.subheader("Model")
+            from step_detection.inference import CNN_MODEL_PATH, MODEL_60FPS_PATH
+
+            model_options = ["MLP (original)"]
+            if MODEL_60FPS_PATH.exists():
+                model_options.insert(0, "MLP (60fps)")
+            if CNN_MODEL_PATH.exists():
+                model_options.insert(0, "CNN (60fps)")
+            model_choice = st.radio(
+                "Step detection model",
+                model_options,
+                horizontal=True,
+                key="test_model_choice",
+            )
+            if "CNN" in model_choice:
+                model_type = "cnn"
+            elif "60fps" in model_choice:
+                model_type = "mlp_60fps"
+            else:
+                model_type = "mlp"
+
+            # Train buttons
+            col_train_mlp, col_train_cnn, col_run = st.columns(3)
+            with col_train_mlp:
+                if st.button("Train MLP 60fps", key="train_mlp60"):
+                    train_status = st.empty()
+                    train_status.info("Training MLP + others on 60fps data...")
+                    try:
+                        import subprocess
+                        result = subprocess.run(
+                            [sys.executable, "step_detection/train_and_compare.py", "--fps60"],
+                            capture_output=True, text=True, cwd=str(REPO_ROOT),
+                        )
+                        if result.returncode == 0:
+                            train_status.success("60fps models trained! Select 'MLP (60fps)' above.")
+                        else:
+                            train_status.error(f"Training failed:\n{result.stderr[-500:]}")
+                        st.rerun()
+                    except Exception as e:
+                        train_status.error(f"Training failed: {e}")
+            with col_train_cnn:
+                if st.button("Train CNN", key="train_cnn"):
+                    train_status = st.empty()
+                    train_status.info("Training CNN on 60fps data...")
+                    try:
+                        from step_detection.train_cnn import train as train_cnn
+                        train_cnn()
+                        train_status.success("CNN trained! Select 'CNN (60fps)' above.")
+                        st.rerun()
+                    except Exception as e:
+                        train_status.error(f"Training failed: {e}")
+
             # Run button
-            if st.button("Run Step Detection", type="primary", key="run_test"):
+            with col_run:
+                run_clicked = st.button("Run Step Detection", type="primary", key="run_test")
+
+            if run_clicked:
                 from step_detection.inference import run_step_inference
 
                 progress = st.progress(0.0)
@@ -606,6 +662,7 @@ with tab_test:
                         start_frame=t_start,
                         end_frame=t_end,
                         progress_callback=_test_cb,
+                        model_type=model_type,
                     )
 
                 st.session_state.test_result = result

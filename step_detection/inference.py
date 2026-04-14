@@ -45,6 +45,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 MODELS_DIR = SCRIPT_DIR / "models"
 MODEL_PATH = MODELS_DIR / "best_step_model.joblib"
 META_PATH = MODELS_DIR / "best_step_model_meta.json"
+MODEL_60FPS_PATH = MODELS_DIR / "best_step_model_60fps.joblib"
+META_60FPS_PATH = MODELS_DIR / "best_step_model_60fps_meta.json"
+CNN_MODEL_PATH = MODELS_DIR / "step_cnn.pt"
 
 # MediaPipe landmark indices
 L_ANKLE = 27
@@ -66,8 +69,18 @@ mp_drawing_styles = mp_lib.solutions.drawing_styles
 # ============================================================================
 # Model loading
 # ============================================================================
-def load_model():
-    """Load the saved best model and its metadata."""
+def load_model(prefer_60fps=False):
+    """Load the saved best model and its metadata.
+
+    If prefer_60fps=True and the 60fps model exists, load that instead.
+    """
+    if prefer_60fps and MODEL_60FPS_PATH.exists():
+        pipeline = joblib.load(MODEL_60FPS_PATH)
+        with open(META_60FPS_PATH, "r") as f:
+            meta = json.load(f)
+        meta["model_name"] = meta.get("model_name", "unknown") + " (60fps)"
+        return pipeline, meta
+
     if not MODEL_PATH.exists():
         raise FileNotFoundError(
             f"No saved model found at {MODEL_PATH}. "
@@ -152,152 +165,266 @@ def predict_steps(pose_results, feature_cols, pipeline,
 
 
 # ============================================================================
+# CNN model loading & prediction
+# ============================================================================
+def load_cnn_model():
+    """Load the CNN step detection model. Returns (model, checkpoint) or None."""
+    if not CNN_MODEL_PATH.exists():
+        return None
+    try:
+        import torch
+        from step_detection.train_cnn import build_cnn_model
+        checkpoint = torch.load(str(CNN_MODEL_PATH), map_location="cpu", weights_only=False)
+        model = build_cnn_model(input_shape=(checkpoint['window_size'], checkpoint['input_features']))
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model.eval()
+        return model, checkpoint
+    except Exception as e:
+        print(f"Failed to load CNN model: {e}")
+        return None
+
+
+def _swap_sides_array(frame_arr):
+    """Mirror left/right joints for per-foot framing (numpy array version)."""
+    from step_detection.train_cnn import _SWAP_PAIRS, IDX as CNN_IDX
+    swapped = frame_arr.copy()
+    for left_name, right_name in _SWAP_PAIRS:
+        li, ri = CNN_IDX[left_name], CNN_IDX[right_name]
+        swapped[li], swapped[ri] = frame_arr[ri].copy(), frame_arr[li].copy()
+    return swapped
+
+
+def predict_steps_cnn(pose_results, model, checkpoint,
+                      start_frame=0, end_frame=None, fps=60.0):
+    """Run the CNN model on pose results, return per-frame predictions.
+
+    Uses sliding windows of landmark sequences with per-foot framing.
+    If fps > 60, subsamples frames so the CNN sees 60fps temporal spacing.
+    Predictions are mapped back to original frame indices.
+    Same output format as predict_steps() for drop-in replacement.
+    """
+    import torch
+
+    window_size = checkpoint['window_size']
+    target_fps = checkpoint.get('target_fps', 60)
+    train_mean = checkpoint['train_mean']  # (1, window_size, 132)
+    train_std = checkpoint['train_std']
+    half = window_size // 2
+
+    if end_frame is None:
+        end_frame = len(pose_results) - 1
+
+    # Build dense landmark array for the frame range
+    total = end_frame - start_frame + 1
+    landmark_seq_full = np.zeros((total, 33, 4), dtype=np.float32)
+
+    for i in range(total):
+        frame_idx = start_frame + i
+        if frame_idx < len(pose_results):
+            lm_list = _pose_to_landmark_list(pose_results[frame_idx])
+            if lm_list is not None:
+                for j, joint in enumerate(lm_list):
+                    landmark_seq_full[i, j] = [joint["x"], joint["y"], joint["z"], joint["visibility"]]
+
+    # Subsample to 60fps if video is higher FPS
+    stride = max(1, round(fps / target_fps))
+    if stride > 1:
+        # Pick every stride-th frame for CNN input
+        subsample_indices = list(range(0, total, stride))
+        landmark_seq = landmark_seq_full[subsample_indices]
+    else:
+        subsample_indices = list(range(total))
+        landmark_seq = landmark_seq_full
+
+    seq_len = len(landmark_seq)
+
+    # Run CNN on subsampled sequence, then map predictions back
+    sub_predictions = {}  # subsample index -> (left_prob, right_prob)
+
+    for i in range(seq_len):
+        if np.sum(np.abs(landmark_seq[i])) < 0.01:
+            sub_predictions[i] = (0.0, 0.0)
+            continue
+
+        # Build padded window
+        pad_start = max(0, i - half)
+        pad_end = min(seq_len, i + half + 1)
+        window = landmark_seq[pad_start:pad_end]
+
+        if len(window) < window_size:
+            if pad_start == 0:
+                pad_needed = window_size - len(window)
+                window = np.concatenate([np.tile(window[0:1], (pad_needed, 1, 1)), window])
+            else:
+                pad_needed = window_size - len(window)
+                window = np.concatenate([window, np.tile(window[-1:], (pad_needed, 1, 1))])
+
+        left_prob = 0.0
+        right_prob = 0.0
+
+        for side in ("left", "right"):
+            if side == "right":
+                w = np.stack([_swap_sides_array(window[t]) for t in range(window_size)])
+            else:
+                w = window.copy()
+
+            w_flat = w.reshape(window_size, -1).astype(np.float32)
+            w_norm = (w_flat[np.newaxis] - train_mean) / train_std
+
+            with torch.no_grad():
+                logits = model(torch.from_numpy(w_norm))
+                prob = float(torch.sigmoid(logits).item())
+
+            if side == "left":
+                left_prob = prob
+            else:
+                right_prob = prob
+
+        sub_predictions[i] = (left_prob, right_prob)
+
+    # Map back to original frame indices
+    # For frames between subsampled points, use nearest subsampled prediction
+    predictions = []
+
+    for i in range(total):
+        frame_idx = start_frame + i
+
+        # Find nearest subsampled index
+        sub_idx = min(range(len(subsample_indices)),
+                      key=lambda si: abs(subsample_indices[si] - i))
+        left_prob, right_prob = sub_predictions.get(sub_idx, (0.0, 0.0))
+
+        predictions.append({
+            "frame": frame_idx,
+            "left_contact": left_prob > 0.5,
+            "right_contact": right_prob > 0.5,
+            "left_prob": left_prob,
+            "right_prob": right_prob,
+        })
+
+    return predictions
+
+
+# ============================================================================
 # Step cleaning / grouping
 # ============================================================================
 def clean_predictions(predictions, fps=240,
                       min_step_seconds=0.05, max_gap_seconds=0.05,
                       min_inter_step_seconds=0.12):
-    """Convert noisy per-frame predictions into clean, discrete steps.
+    """Convert per-frame contact predictions into clean, discrete steps.
 
-    Group-based algorithm:
-      1. Assign each frame a dominant side (left/right/none).
-      2. Split into contact groups at gap boundaries (runs of None frames).
-      3. Assign each group a dominant side (majority L or R wins).
-      4. If one group is ~2x the median length, try splitting it at the
-         L/R boundary into two steps.
-      5. Enforce alternation.
-      6. Number and return.
+    Algorithm:
+      1. For each frame, pick the dominant side: whichever foot has
+         higher probability (left_prob vs right_prob). If neither foot
+         crosses 0.3 probability, mark as no-contact (None).
+      2. Run-length encode the dominant side sequence into segments
+         of consecutive same-side frames.
+      3. Absorb short segments (< min_step_frames) into their neighbors.
+      4. Merge adjacent segments of the same side.
+      5. Drop remaining short segments.
+      6. Place the touchdown at each segment's midpoint.
 
     Returns:
-        list of dicts, each with:
-            side, start_frame, end_frame, touchdown_frame, liftoff_frame,
-            step_number
+        list of dicts with: side, start_frame, end_frame,
+        touchdown_frame, liftoff_frame, step_number
     """
     if not predictions:
         return []
 
-    min_step_frames = max(2, round(fps * min_step_seconds))
+    min_step_frames = max(3, round(fps * min_step_seconds))
+    min_contact_prob = 0.3  # at least one foot must exceed this
 
-    # Step 1: assign dominant side per frame
-    frame_sides = []  # list of (frame_idx, side_or_none)
+    # Step 1: assign dominant side per frame based on which prob is higher
+    frame_sides = []
     for p in predictions:
-        l = p["left_contact"]
-        r = p["right_contact"]
         lp = p["left_prob"]
         rp = p["right_prob"]
 
-        if l and r:
-            side = "left" if lp >= rp else "right"
-        elif l:
-            side = "left"
-        elif r:
-            side = "right"
+        # Neither foot has meaningful contact probability
+        if max(lp, rp) < min_contact_prob:
+            frame_sides.append((p["frame"], None))
         else:
-            side = None
-
-        frame_sides.append((p["frame"], side))
+            side = "left" if lp > rp else "right"
+            frame_sides.append((p["frame"], side))
 
     if not frame_sides:
         return []
 
-    # Step 2: split into contact groups at gap boundaries
-    # A gap is any run of None (no-contact) frames.
-    groups = []  # list of lists of (frame_idx, side)
-    current_group = []
-    for frame, side in frame_sides:
-        if side is None:
-            if current_group:
-                groups.append(current_group)
-                current_group = []
+    # Step 2: run-length encode into segments of (side, start_idx, end_idx)
+    segments = []  # (side, start_frame, end_frame)
+    cur_side = frame_sides[0][1]
+    cur_start = frame_sides[0][0]
+
+    for i in range(1, len(frame_sides)):
+        frame, side = frame_sides[i]
+        if side != cur_side:
+            segments.append((cur_side, cur_start, frame_sides[i - 1][0]))
+            cur_side = side
+            cur_start = frame
+    segments.append((cur_side, cur_start, frame_sides[-1][0]))
+
+    # Step 3: absorb short contact segments into their longest neighbor
+    changed = True
+    while changed:
+        changed = False
+        new_segments = []
+        i = 0
+        while i < len(segments):
+            side, start, end = segments[i]
+            duration = end - start + 1
+
+            if side is not None and duration < min_step_frames:
+                # Find the longest adjacent contact neighbor
+                prev_side = segments[i - 1][0] if i > 0 else None
+                prev_len = (segments[i - 1][2] - segments[i - 1][1] + 1) if i > 0 else 0
+                next_side = segments[i + 1][0] if i + 1 < len(segments) else None
+                next_len = (segments[i + 1][2] - segments[i + 1][1] + 1) if i + 1 < len(segments) else 0
+
+                # Merge into the longer neighbor
+                if prev_len >= next_len and prev_side is not None and new_segments:
+                    # Extend previous segment
+                    ps, ps_start, ps_end = new_segments[-1]
+                    new_segments[-1] = (ps, ps_start, end)
+                    changed = True
+                elif next_side is not None and i + 1 < len(segments):
+                    # Extend next segment to include this one
+                    ns, ns_start, ns_end = segments[i + 1]
+                    segments[i + 1] = (ns, start, ns_end)
+                    changed = True
+                else:
+                    new_segments.append((side, start, end))
+            else:
+                new_segments.append((side, start, end))
+            i += 1
+        segments = new_segments
+
+    # Step 4: merge adjacent segments of the same side
+    merged = []
+    for side, start, end in segments:
+        if merged and merged[-1][0] == side:
+            merged[-1] = (side, merged[-1][1], end)
         else:
-            current_group.append((frame, side))
-    if current_group:
-        groups.append(current_group)
+            merged.append((side, start, end))
+    segments = merged
 
-    # Drop groups shorter than min_step_frames
-    groups = [g for g in groups if len(g) >= min_step_frames]
-
-    if not groups:
-        return []
-
-    # Step 3: assign dominant side per group (majority wins)
+    # Step 5: build steps from contact segments, drop short ones and None
     steps = []
-    for group in groups:
-        left_count = sum(1 for _, s in group if s == "left")
-        right_count = sum(1 for _, s in group if s == "right")
-        side = "left" if left_count >= right_count else "right"
-
-        start_frame = group[0][0]
-        end_frame = group[-1][0]
-        mid_frame = group[len(group) // 2][0]
-
+    for side, start, end in segments:
+        if side is None:
+            continue
+        duration = end - start + 1
+        if duration < min_step_frames:
+            continue
+        mid = start + duration // 2
         steps.append({
             "side": side,
-            "start_frame": start_frame,
-            "end_frame": end_frame,
-            "touchdown_frame": mid_frame,
-            "liftoff_frame": end_frame,
-            "_group": group,  # keep for potential split
+            "start_frame": start,
+            "end_frame": end,
+            "touchdown_frame": mid,
+            "liftoff_frame": end,
         })
 
-    # Step 4: try splitting one suspiciously long group
-    if len(steps) >= 2:
-        lengths = sorted(s["end_frame"] - s["start_frame"] + 1 for s in steps)
-        median_len = lengths[len(lengths) // 2]
-
-        split_done = False
-        for i, s in enumerate(steps):
-            grp_len = s["end_frame"] - s["start_frame"] + 1
-            if grp_len > median_len * 1.8 and not split_done:
-                group = s["_group"]
-                # Find the best split point: where the dominant side flips
-                # Look for the longest run of side A followed by longest run of side B
-                best_split = None
-                best_score = 0
-                for j in range(min_step_frames, len(group) - min_step_frames):
-                    left_half = group[:j]
-                    right_half = group[j:]
-                    l1 = sum(1 for _, sd in left_half if sd == "left")
-                    r1 = sum(1 for _, sd in left_half if sd == "right")
-                    l2 = sum(1 for _, sd in right_half if sd == "left")
-                    r2 = sum(1 for _, sd in right_half if sd == "right")
-                    # Score: how cleanly do the halves separate into different sides?
-                    side1 = "left" if l1 >= r1 else "right"
-                    side2 = "left" if l2 >= r2 else "right"
-                    if side1 != side2:
-                        score = max(l1, r1) + max(l2, r2)
-                        if score > best_score:
-                            best_score = score
-                            best_split = j
-
-                if best_split is not None:
-                    g1 = group[:best_split]
-                    g2 = group[best_split:]
-                    l1 = sum(1 for _, sd in g1 if sd == "left")
-                    r1 = sum(1 for _, sd in g1 if sd == "right")
-                    l2 = sum(1 for _, sd in g2 if sd == "left")
-                    r2 = sum(1 for _, sd in g2 if sd == "right")
-
-                    s1 = {
-                        "side": "left" if l1 >= r1 else "right",
-                        "start_frame": g1[0][0],
-                        "end_frame": g1[-1][0],
-                        "touchdown_frame": g1[len(g1) // 2][0],
-                        "liftoff_frame": g1[-1][0],
-                        "_group": g1,
-                    }
-                    s2 = {
-                        "side": "left" if l2 >= r2 else "right",
-                        "start_frame": g2[0][0],
-                        "end_frame": g2[-1][0],
-                        "touchdown_frame": g2[len(g2) // 2][0],
-                        "liftoff_frame": g2[-1][0],
-                        "_group": g2,
-                    }
-                    steps = steps[:i] + [s1, s2] + steps[i + 1:]
-                    split_done = True
-
-    # Step 5: enforce alternation — consecutive same-side steps keep the longer
+    # Step 6: enforce alternation — consecutive same-side keeps the longer
     if len(steps) > 1:
         cleaned = [steps[0]]
         for s in steps[1:]:
@@ -310,9 +437,8 @@ def clean_predictions(predictions, fps=240,
                 cleaned.append(s)
         steps = cleaned
 
-    # Clean up internal keys and number
+    # Number them
     for i, s in enumerate(steps):
-        s.pop("_group", None)
         s["step_number"] = i + 1
 
     return steps
@@ -683,8 +809,11 @@ def _reencode_h264(output_path):
 # Full inference pipeline
 # ============================================================================
 def run_step_inference(video_path, start_frame=None, end_frame=None,
-                       progress_callback=None):
+                       progress_callback=None, model_type="auto"):
     """Full inference pipeline: pose → predict → clean → render two videos.
+
+    Args:
+        model_type: "auto" (CNN if available, else MLP), "cnn", or "mlp"
 
     Returns:
         dict with keys:
@@ -696,9 +825,27 @@ def run_step_inference(video_path, start_frame=None, end_frame=None,
             model_meta: dict
     """
     # Load model
-    pipeline, meta = load_model()
-    feature_cols = meta["feature_columns"]
-    model_name = meta["model_name"]
+    use_cnn = False
+    use_60fps_mlp = model_type == "mlp_60fps"
+
+    if model_type in ("auto", "cnn"):
+        cnn_result = load_cnn_model()
+        if cnn_result is not None:
+            use_cnn = True
+
+    if model_type == "auto" and not use_cnn and MODEL_60FPS_PATH.exists():
+        use_60fps_mlp = True
+
+    if use_cnn:
+        cnn_model, cnn_checkpoint = cnn_result
+        model_name = f"CNN (window={cnn_checkpoint['window_size']})"
+        meta = {"model_name": model_name, "type": "cnn"}
+    else:
+        if model_type == "cnn":
+            raise FileNotFoundError("CNN model not found. Run train_cnn.py first.")
+        pipeline, meta = load_model(prefer_60fps=use_60fps_mlp)
+        feature_cols = meta["feature_columns"]
+        model_name = meta["model_name"]
 
     if progress_callback:
         progress_callback(0.05, "Model loaded")
@@ -733,7 +880,10 @@ def run_step_inference(video_path, start_frame=None, end_frame=None,
         progress_callback(0.58, "Predicting steps...")
 
     # Predict
-    predictions = predict_steps(pose_results, feature_cols, pipeline, start_frame, end_frame)
+    if use_cnn:
+        predictions = predict_steps_cnn(pose_results, cnn_model, cnn_checkpoint, start_frame, end_frame, fps=src_fps)
+    else:
+        predictions = predict_steps(pose_results, feature_cols, pipeline, start_frame, end_frame)
 
     if progress_callback:
         progress_callback(0.62, "Cleaning predictions...")
