@@ -99,12 +99,12 @@ export function ResultsPanel({ job, onReset }: Props) {
         <div className="space-y-2">
           <h3 className="text-sm font-medium text-gray-400">Annotated video</h3>
           <video
-            src={apiClient.getResultFileUrl(job.job_id, 'output.mp4')}
+            src={`${apiClient.getResultFileUrl(job.job_id, 'output.mp4')}?t=${Date.now()}`}
             controls
             className="w-full rounded-xl"
           />
           <a
-            href={apiClient.getResultFileUrl(job.job_id, 'output.mp4')}
+            href={`${apiClient.getResultFileUrl(job.job_id, 'output.mp4')}?t=${Date.now()}`}
             download="analysis_output.mp4"
             className="inline-block text-xs text-blue-400 hover:underline"
           >
