@@ -75,11 +75,15 @@ def load_model(prefer_60fps=False):
     If prefer_60fps=True and the 60fps model exists, load that instead.
     """
     if prefer_60fps and MODEL_60FPS_PATH.exists():
-        pipeline = joblib.load(MODEL_60FPS_PATH)
-        with open(META_60FPS_PATH, "r") as f:
-            meta = json.load(f)
-        meta["model_name"] = meta.get("model_name", "unknown") + " (60fps)"
-        return pipeline, meta
+        try:
+            pipeline = joblib.load(MODEL_60FPS_PATH)
+            with open(META_60FPS_PATH, "r") as f:
+                meta = json.load(f)
+            meta["model_name"] = meta.get("model_name", "unknown") + " (60fps)"
+            return pipeline, meta
+        except Exception as e:
+            print(f"Failed to load 60fps model (numpy version mismatch?): {e}")
+            print("Falling back to original model")
 
     if not MODEL_PATH.exists():
         raise FileNotFoundError(
