@@ -720,19 +720,21 @@ def run_unified_pipeline(
 
         # Draw Max Bend overlay (persistent from max bend frame onward)
         if max_bend_annotation and frame_idx == max_bend_annotation['frame']:
-            logger.info(f"Drawing max bend annotation at frame {frame_idx}: tip={max_bend_annotation['tip']}, top={max_bend_annotation['top']}")
+            logger.info(f"Drawing max bend annotation at frame {frame_idx}: tip={max_bend_annotation['tip']}, top={max_bend_annotation['top']}, total_frames={total_frames}")
         if max_bend_annotation and frame_idx >= max_bend_annotation['frame']:
             mb_tip = max_bend_annotation['tip']
             mb_top = max_bend_annotation['top']
-            # Chord line from reconstructed tip up to top of pole (yellow, thick)
-            cv2.line(frame, mb_tip, mb_top, (0, 255, 255), 3)
+            # Chord line from reconstructed tip up to top of pole (yellow)
+            cv2.line(frame, mb_tip, mb_top, (0, 255, 255), 2)
             # Dot at reconstructed tip (blue) and top of pole (red)
-            cv2.circle(frame, mb_tip, 10, (255, 0, 0), -1)
-            cv2.circle(frame, mb_top, 10, (0, 0, 255), -1)
-            # Max bend label just above the top-of-pole dot
+            cv2.circle(frame, mb_tip, 8, (255, 0, 0), -1)
+            cv2.circle(frame, mb_top, 8, (0, 0, 255), -1)
+            # Max bend label above the top-of-pole dot
             draw_outlined_text(frame, max_bend_annotation['label'],
                                (mb_top[0] + 15, mb_top[1] - 15),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            if frame_idx == total_frames - 1:
+                logger.info(f"Max bend drawn on LAST frame {frame_idx}")
 
         # Compute running average stride for HUD
         current_stride_text = ""

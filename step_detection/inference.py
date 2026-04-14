@@ -441,6 +441,20 @@ def clean_predictions(predictions, fps=240,
                 cleaned.append(s)
         steps = cleaned
 
+    # Step 7: drop outlier steps that are much shorter than the median
+    # A real approach run has roughly equal step durations. If the first
+    # or last step is less than 40% of the median duration, it's noise.
+    if len(steps) >= 3:
+        durations = [s["end_frame"] - s["start_frame"] + 1 for s in steps]
+        median_dur = sorted(durations)[len(durations) // 2]
+        threshold = median_dur * 0.4
+
+        # Only trim from the edges (first/last step)
+        if durations[0] < threshold:
+            steps = steps[1:]
+        if steps and (steps[-1]["end_frame"] - steps[-1]["start_frame"] + 1) < threshold:
+            steps = steps[:-1]
+
     # Number them
     for i, s in enumerate(steps):
         s["step_number"] = i + 1
