@@ -5,10 +5,11 @@ Job routes for VaultSense API.
 import asyncio
 import json
 import os
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Optional
 
-import cv2
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
 
@@ -146,26 +147,29 @@ async def get_frame(job_id: str, frame_idx: int = 0, source: str = "input"):
     if not input_path.exists():
         raise HTTPException(404, f"Video '{video_file}' not found (may have been cleaned up)")
 
-    cap = cv2.VideoCapture(str(input_path))
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    frame_idx = max(0, min(frame_idx, total - 1))
-    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-    ret, frame = cap.read()
-    cap.release()
+    from api.services.job_runner import _find_ffmpeg
+    ffmpeg_exe = _find_ffmpeg()
+    frame_idx = max(0, frame_idx)
 
-    if not ret:
-        raise HTTPException(500, "Could not read frame")
-
-    # Scale down for UI if large
-    h, w = frame.shape[:2]
-    if w > 1280:
-        scale = 1280 / w
-        frame = cv2.resize(frame, (1280, int(h * scale)))
-
-    import tempfile
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-        cv2.imwrite(tmp.name, frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
         tmp_path = tmp.name
+
+    cmd = [
+        ffmpeg_exe, "-y",
+        "-loglevel", "error",
+        "-i", str(input_path),
+        "-vf", f"select=eq(n\\,{frame_idx}),scale='min(1280,iw)':-2",
+        "-vframes", "1",
+        "-q:v", "4",
+        tmp_path,
+    ]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+    if result.returncode != 0 or not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise HTTPException(500, f"Could not read frame {frame_idx}")
 
     return FileResponse(tmp_path, media_type="image/jpeg")
 

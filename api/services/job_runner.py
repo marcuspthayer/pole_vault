@@ -38,6 +38,65 @@ def _find_ffmpeg() -> str:
         raise FileNotFoundError("No ffmpeg binary found (imageio_ffmpeg or system)")
 
 
+def _find_ffprobe() -> Optional[str]:
+    """Return path to ffprobe binary, or None if unavailable."""
+    import shutil
+    path = shutil.which("ffprobe")
+    if path:
+        return path
+    # imageio_ffmpeg ships ffmpeg but usually not ffprobe; try sibling lookup
+    try:
+        ffmpeg = _find_ffmpeg()
+        candidate = os.path.join(os.path.dirname(ffmpeg), "ffprobe")
+        if os.path.exists(candidate):
+            return candidate
+    except Exception:
+        pass
+    return None
+
+
+def _probe_video(path: Path) -> dict:
+    """Return {fps, total_frames, width, height} via ffprobe (no cv2)."""
+    ffprobe = _find_ffprobe()
+    if not ffprobe:
+        raise FileNotFoundError("ffprobe not found — install ffmpeg system package")
+    cmd = [
+        ffprobe, "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=avg_frame_rate,nb_frames,nb_read_frames,width,height,duration",
+        "-of", "json",
+        str(path),
+    ]
+    out = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         text=True, timeout=30)
+    if out.returncode != 0:
+        raise RuntimeError(f"ffprobe failed: {out.stderr[:200]}")
+    info = json.loads(out.stdout).get("streams", [{}])[0]
+    # avg_frame_rate is "num/den"
+    fps = 0.0
+    afr = info.get("avg_frame_rate", "0/1")
+    try:
+        num, den = afr.split("/")
+        fps = float(num) / float(den) if float(den) else 0.0
+    except (ValueError, ZeroDivisionError):
+        fps = 0.0
+    nb = info.get("nb_frames") or info.get("nb_read_frames")
+    if nb and str(nb).isdigit():
+        total_frames = int(nb)
+    else:
+        # Fallback: duration * fps
+        try:
+            total_frames = int(float(info.get("duration", 0)) * fps)
+        except (TypeError, ValueError):
+            total_frames = 0
+    return {
+        "fps": fps,
+        "total_frames": total_frames,
+        "width": int(info.get("width", 0)),
+        "height": int(info.get("height", 0)),
+    }
+
+
 def _downsample_if_needed(input_path: Path) -> Optional[float]:
     """If video fps > MAX_FPS, re-encode to MAX_FPS using ffmpeg.
 
@@ -45,10 +104,11 @@ def _downsample_if_needed(input_path: Path) -> Optional[float]:
     The input file is replaced in-place on success.
     """
     try:
-        import cv2
-        cap = cv2.VideoCapture(str(input_path))
-        fps = cap.get(cv2.CAP_PROP_FPS) or 0
-        cap.release()
+        try:
+            fps = _probe_video(input_path)["fps"]
+        except Exception as e:
+            logger.warning("ffprobe fps check failed, skipping downsample: %s", e)
+            return None
 
         if fps <= MAX_FPS:
             return None
@@ -342,36 +402,6 @@ def _ensure_disk_space() -> None:
         logger.warning("Disk space check failed: %s", e)
 
 
-def _detect_start_frame(video_path: str, max_check: int = 50, stride: int = 10) -> Optional[int]:
-    """Scan early frames to find the first one containing a person (YOLO class 0)."""
-    try:
-        import cv2 as _cv2
-        from ultralytics import YOLO
-        model = YOLO("yolo11n.pt")
-        cap = _cv2.VideoCapture(video_path)
-        total = int(cap.get(_cv2.CAP_PROP_FRAME_COUNT))
-
-        for i in range(0, min(total, max_check * stride), stride):
-            cap.set(_cv2.CAP_PROP_POS_FRAMES, i)
-            ret, frame = cap.read()
-            if not ret:
-                break
-            results = model.predict(source=frame, conf=0.15, imgsz=320, verbose=False)
-            if len(results) > 0 and len(results[0].boxes) > 0:
-                import numpy as np
-                classes = results[0].boxes.cls.cpu().numpy().astype(int)
-                if 0 in classes:
-                    cap.release()
-                    del model
-                    return max(0, i)
-        cap.release()
-        del model
-        return None
-    except Exception as e:
-        logger.warning("Auto start-frame detection failed: %s", e)
-        return None
-
-
 async def create_job(video_bytes: bytes, filename: str, config: dict, status: str = "queued") -> dict:
     """
     Save uploaded video and create job record. Returns job metadata dict.
@@ -390,17 +420,15 @@ async def create_job(video_bytes: bytes, filename: str, config: dict, status: st
     original_fps = _downsample_if_needed(input_path)
 
     # Read video metadata (reflects downsampled file if applicable)
-    import cv2
-    cap = cv2.VideoCapture(str(input_path))
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    cap.release()
-
-    # TODO: move YOLO start-frame detection into the pipeline subprocess
-    # to avoid loading the model in the main FastAPI process (OOM risk).
-    suggested_start = None
+    try:
+        meta = _probe_video(input_path)
+        total_frames = meta["total_frames"]
+        fps = meta["fps"] or 30.0
+        width = meta["width"]
+        height = meta["height"]
+    except Exception as e:
+        logger.warning("ffprobe metadata read failed: %s", e)
+        total_frames, fps, width, height = 0, 30.0, 0, 0
 
     job = {
         "job_id": job_id,
@@ -413,7 +441,7 @@ async def create_job(video_bytes: bytes, filename: str, config: dict, status: st
         "width": width,
         "height": height,
         "original_fps": original_fps,
-        "suggested_start_frame": suggested_start,
+        "suggested_start_frame": None,
         "created_at": time.time(),
         "metrics": None,
         "result_files": None,
